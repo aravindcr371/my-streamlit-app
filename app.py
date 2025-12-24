@@ -6,13 +6,31 @@ import altair as alt
 
 # ------------------ FILE SETUP ------------------
 excel_file = "data.xlsx"
-if not os.path.exists(excel_file):
-    pd.DataFrame(columns=[
-        "Team","Date","Week","Month","Member","Component",
-        "Tickets","Banners","Duration","Comments"
-    ]).to_excel(excel_file, index=False)
 
+# Create file with explicit dtypes if not exists
+if not os.path.exists(excel_file):
+    pd.DataFrame({
+        "Team": pd.Series(dtype="str"),
+        "Date": pd.Series(dtype="datetime64[ns]"),
+        "Week": pd.Series(dtype="Int64"),
+        "Month": pd.Series(dtype="str"),
+        "Member": pd.Series(dtype="str"),
+        "Component": pd.Series(dtype="str"),
+        "Tickets": pd.Series(dtype="int"),
+        "Banners": pd.Series(dtype="int"),
+        "Duration": pd.Series(dtype="str"),
+        "Comments": pd.Series(dtype="str"),
+    }).to_excel(excel_file, index=False)
+
+# Read back and coerce dtypes
 df = pd.read_excel(excel_file)
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df["Week"] = pd.to_numeric(df["Week"], errors="coerce").astype("Int64")
+df["Tickets"] = pd.to_numeric(df["Tickets"], errors="coerce").fillna(0).astype(int)
+df["Banners"] = pd.to_numeric(df["Banners"], errors="coerce").fillna(0).astype(int)
+df["Month"] = df["Month"].astype(str)
+df["Duration"] = df["Duration"].astype(str)
+df["Comments"] = df["Comments"].astype(str)
 
 TEAM = "Production Design"
 MEMBERS = ["Vinitha", "Vadivel", "Nirmal", "Karthi", "Jayaprakash", "Vidhya"]
@@ -51,18 +69,21 @@ with tab1:
     comments = st.text_area("Comments")
 
     if st.button("Submit") and date:
-        df = pd.concat([df, pd.DataFrame([{
+        new_row = pd.DataFrame([{
             "Team": TEAM,
-            "Date": date,
+            "Date": pd.to_datetime(date),
             "Week": date.isocalendar()[1],
             "Month": date.strftime("%B"),
             "Member": member,
             "Component": component,
-            "Tickets": tickets,
-            "Banners": banners,
+            "Tickets": int(tickets),
+            "Banners": int(banners),
             "Duration": f"{hours}h {minutes}m",
             "Comments": comments
-        }])], ignore_index=True)
+        }])
+        df = pd.concat([df, new_row], ignore_index=True)
+
+        # Save back to Excel
         df.to_excel(excel_file, index=False)
         st.success("Saved successfully")
 
@@ -75,7 +96,7 @@ with tab2:
     if df.empty:
         st.info("No data available")
     else:
-        df["Date"] = pd.to_datetime(df["Date"])
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         view = st.radio("Select View", [
             "Week-to-Date",
             "Month-to-Date",
