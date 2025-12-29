@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date as date_cls
 import altair as alt
 from supabase import create_client
 
@@ -17,42 +17,60 @@ COMPONENTS = ["-- Select --","Content Email","Digital Banners","Weekend","Edits"
               "Internal Requests","Promo Creative","Social Requests",
               "Landing Pages","Category Banners","Image Requests"]
 
+# Keys used by the form widgets
+RESET_KEYS = [
+    "date_field", "member_field", "component_field",
+    "tickets_field", "banners_field", "hours_field",
+    "minutes_field", "comments_field"
+]
+
+# If a reset was requested on the previous run, clear the form keys BEFORE rendering widgets
+if st.session_state.get("do_reset"):
+    for k in RESET_KEYS:
+        st.session_state.pop(k, None)
+    st.session_state["do_reset"] = False
+
 tab1, tab2 = st.tabs(["📝 Production Design", "📊 Visuals"])
 
 # ------------------ TAB 1 ------------------
 with tab1:
     st.title("Production Design")
-    st.text_input("Team", TEAM, disabled=True, key="team_field")
-    date = st.date_input("Date", key="date_field")
+    st.text_input("Team", TEAM, disabled=True, key="team_display")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        member = st.selectbox("Member", MEMBERS, key="member_field")
-    with col2:
-        component = st.selectbox("Component", COMPONENTS, key="component_field")
+    # Use a form to group inputs and submit together
+    with st.form(key="entry_form", clear_on_submit=False):
+        date_value = st.date_input("Date", key="date_field")
+        col1, col2 = st.columns(2)
+        with col1:
+            member = st.selectbox("Member", MEMBERS, key="member_field")
+        with col2:
+            component = st.selectbox("Component", COMPONENTS, key="component_field")
 
-    col3, col4 = st.columns(2)
-    with col3:
-        tickets = st.number_input("Tickets", min_value=0, step=1, key="tickets_field")
-    with col4:
-        banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
+        col3, col4 = st.columns(2)
+        with col3:
+            tickets = st.number_input("Tickets", min_value=0, step=1, key="tickets_field")
+        with col4:
+            banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
 
-    col5, col6 = st.columns(2)
-    with col5:
-        hours = st.selectbox("Hours", range(24), key="hours_field")
-    with col6:
-        minutes = st.selectbox("Minutes", range(60), key="minutes_field")
+        col5, col6 = st.columns(2)
+        with col5:
+            hours = st.selectbox("Hours", range(24), key="hours_field")
+        with col6:
+            minutes = st.selectbox("Minutes", range(60), key="minutes_field")
 
-    comments = st.text_area("Comments", key="comments_field")
+        comments = st.text_area("Comments", key="comments_field")
 
-    if st.button("Submit"):
-        if date and member != "-- Select --" and component != "-- Select --":
-            duration_minutes = hours * 60 + minutes
+        submitted = st.form_submit_button("Submit")
+
+    if submitted:
+        # Validate required fields
+        if isinstance(date_value, (datetime, date_cls)) and member != "-- Select --" and component != "-- Select --":
+            duration_minutes = int(hours) * 60 + int(minutes)
             new_row = {
                 "team": TEAM,
-                "date": date.isoformat(),
-                "week": date.isocalendar()[1],
-                "month": date.strftime("%B"),
+                "date": (date_value if isinstance(date_value, date_cls) else date_value.date()).isoformat(),
+                "week": (date_value if isinstance(date_value, date_cls) else date_value.date()).isocalendar()[1],
+                "month": (date_value if isinstance(date_value, date_cls) else date_value.date()).strftime("%B"),
                 "member": member,
                 "component": component,
                 "tickets": int(tickets),
@@ -60,27 +78,19 @@ with tab1:
                 "duration": duration_minutes,
                 "comments": comments.strip() if comments else None
             }
-
             try:
                 res = supabase.table("creative").insert(new_row).execute()
                 if res.data:
                     st.success("Saved successfully")
-
-                    # Clear form fields
-                    st.session_state["date_field"] = datetime.today().date()
-                    st.session_state["member_field"] = "-- Select --"
-                    st.session_state["component_field"] = "-- Select --"
-                    st.session_state["tickets_field"] = 0
-                    st.session_state["banners_field"] = 0
-                    st.session_state["hours_field"] = 0
-                    st.session_state["minutes_field"] = 0
-                    st.session_state["comments_field"] = ""
+                    # Mark for reset and rerun so widgets are re-created with fresh state
+                    st.session_state["do_reset"] = True
+                    st.rerun()
                 else:
                     st.warning("Insert may not have returned data")
             except Exception as e:
                 st.error(f"Error inserting: {e}")
         else:
-            st.warning("Please select a member and component before submitting.")
+            st.warning("Please select a member and component, and pick a date before submitting.")
 
     # Fetch all rows from Supabase
     try:
@@ -111,12 +121,9 @@ with tab2:
     if df.empty:
         st.info("No data available")
     else:
+        # Ensure date column is datetime for grouping/encoding
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        view = st.radio("Select View", [
-            "Week-to-Date",
-            "Month-to-Date",
-            "Previous Month"
-        ])
+        view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
 
         # ---------- FILTER ----------
         if view == "Week-to-Date":
