@@ -1,4 +1,4 @@
 streamlit
 pandas
-supabase-py==2.3.5
 altair
+supabase-py==2.3.5
