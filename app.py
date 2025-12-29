@@ -5,8 +5,6 @@ import altair as alt
 from supabase import create_client
 
 # ------------------ SUPABASE SETUP ------------------
-# You can hard-code your URL and anon key here, or better:
-# put them in Streamlit Cloud Secrets (Settings → Secrets).
 SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"  # your anon key
 
@@ -20,56 +18,68 @@ tab1, tab2 = st.tabs(["📝 Production Design", "📊 Visuals"])
 # ------------------ TAB 1 ------------------
 with tab1:
     st.title("Production Design")
-    st.text_input("Team", TEAM, disabled=True)
-    date = st.date_input("Date")
+    st.text_input("Team", TEAM, disabled=True, key="team_field")
+    date = st.date_input("Date", key="date_field")
 
     col1, col2 = st.columns(2)
     with col1:
-        member = st.selectbox("Member", MEMBERS)
+        member = st.selectbox("Member", MEMBERS, key="member_field")
     with col2:
         component = st.selectbox("Component", [
             "Content Email","Digital Banners","Weekend","Edits","Break",
             "Others","Meeting","Innovation","Round 2 Banners","Leave",
             "Internal Requests","Promo Creative","Social Requests",
             "Landing Pages","Category Banners","Image Requests"
-        ])
+        ], key="component_field")
 
     col3, col4 = st.columns(2)
     with col3:
-        tickets = st.number_input("Tickets", min_value=0, step=1)
+        tickets = st.number_input("Tickets", min_value=0, step=1, key="tickets_field")
     with col4:
-        banners = st.number_input("Banners", min_value=0, step=1)
+        banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
 
     col5, col6 = st.columns(2)
     with col5:
-        hours = st.selectbox("Hours", range(24))
+        hours = st.selectbox("Hours", range(24), key="hours_field")
     with col6:
-        minutes = st.selectbox("Minutes", range(60))
+        minutes = st.selectbox("Minutes", range(60), key="minutes_field")
 
-    comments = st.text_area("Comments")
+    comments = st.text_area("Comments", key="comments_field")
 
-    if st.button("Submit") and date:
-        duration_minutes = hours * 60 + minutes
-        new_row = {
-            "team": TEAM,
-            "date": date.isoformat(),  # ISO format for Supabase date column
-            "week": date.isocalendar()[1],
-            "month": date.strftime("%B"),
-            "member": member,
-            "component": component,
-            "tickets": int(tickets),
-            "banners": int(banners),
-            "duration": duration_minutes
-        }
+    if st.button("Submit"):
+        if date:
+            duration_minutes = hours * 60 + minutes
+            new_row = {
+                "team": TEAM,
+                "date": date.isoformat(),
+                "week": date.isocalendar()[1],
+                "month": date.strftime("%B"),
+                "member": member,
+                "component": component,
+                "tickets": int(tickets),
+                "banners": int(banners),
+                "duration": duration_minutes,
+                "comments": comments.strip() if comments else None
+            }
 
-        try:
-            res = supabase.table("creative").insert(new_row).execute()
-            if res.data:
-                st.success("Saved successfully")
-            else:
-                st.warning("Insert may not have returned data")
-        except Exception as e:
-            st.error(f"Error inserting: {e}")
+            try:
+                res = supabase.table("creative").insert(new_row).execute()
+                if res.data:
+                    st.success("Saved successfully")
+
+                    # Clear form fields
+                    st.session_state["date_field"] = datetime.today().date()
+                    st.session_state["member_field"] = MEMBERS[0]
+                    st.session_state["component_field"] = "Content Email"
+                    st.session_state["tickets_field"] = 0
+                    st.session_state["banners_field"] = 0
+                    st.session_state["hours_field"] = 0
+                    st.session_state["minutes_field"] = 0
+                    st.session_state["comments_field"] = ""
+                else:
+                    st.warning("Insert may not have returned data")
+            except Exception as e:
+                st.error(f"Error inserting: {e}")
 
     # Fetch all rows from Supabase
     try:
@@ -80,6 +90,10 @@ with tab1:
         df = pd.DataFrame()
 
     if not df.empty:
+        # Show only columns starting from "team"
+        if "team" in df.columns:
+            start_index = df.columns.get_loc("team")
+            df = df.iloc[:, start_index:]
         st.dataframe(df)
 
 # ------------------ TAB 2 ------------------
