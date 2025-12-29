@@ -5,12 +5,10 @@ import altair as alt
 from supabase import create_client
 
 # ------------------ SUPABASE SETUP ------------------
-# Store these in Streamlit Cloud Secrets for safety:
-# SUPABASE_URL = st.secrets["SUPABASE_URL"]
-# SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+# You can hard-code your URL and anon key here, or better:
+# put them in Streamlit Cloud Secrets (Settings → Secrets).
+SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  # your anon key
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -64,15 +62,22 @@ with tab1:
             "duration": duration_minutes
         }
 
-        res = supabase.table("creative").insert(new_row).execute()
-        if res.error:
-            st.error(f"Error inserting: {res.error}")
-        else:
-            st.success("Saved successfully")
+        try:
+            res = supabase.table("creative").insert(new_row).execute()
+            if res.data:
+                st.success("Saved successfully")
+            else:
+                st.warning("Insert may not have returned data")
+        except Exception as e:
+            st.error(f"Error inserting: {e}")
 
     # Fetch all rows from Supabase
-    response = supabase.table("creative").select("*").execute()
-    df = pd.DataFrame(response.data)
+    try:
+        response = supabase.table("creative").select("*").execute()
+        df = pd.DataFrame(response.data)
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        df = pd.DataFrame()
 
     if not df.empty:
         st.dataframe(df)
@@ -81,8 +86,12 @@ with tab1:
 with tab2:
     st.title("Visuals Dashboard")
 
-    response = supabase.table("creative").select("*").execute()
-    df = pd.DataFrame(response.data)
+    try:
+        response = supabase.table("creative").select("*").execute()
+        df = pd.DataFrame(response.data)
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        df = pd.DataFrame()
 
     if df.empty:
         st.info("No data available")
