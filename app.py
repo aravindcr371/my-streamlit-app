@@ -50,7 +50,7 @@ with tab1:
         duration_minutes = hours * 60 + minutes
         new_row = {
             "team": TEAM,
-            "date": str(date),
+            "date": date.isoformat(),  # ISO format for Supabase date column
             "week": date.isocalendar()[1],
             "month": date.strftime("%B"),
             "member": member,
@@ -60,9 +60,11 @@ with tab1:
             "duration": duration_minutes
         }
 
-        # Insert into Supabase
-        supabase.table("creative").insert(new_row).execute()
-        st.success("Saved successfully")
+        res = supabase.table("creative").insert(new_row).execute()
+        if res.error:
+            st.error(f"Error inserting: {res.error}")
+        else:
+            st.success("Saved successfully")
 
     # Fetch all rows from Supabase
     response = supabase.table("creative").select("*").execute()
@@ -75,7 +77,6 @@ with tab1:
 with tab2:
     st.title("Visuals Dashboard")
 
-    # Fetch fresh data
     response = supabase.table("creative").select("*").execute()
     df = pd.DataFrame(response.data)
 
