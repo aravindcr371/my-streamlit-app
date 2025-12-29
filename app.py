@@ -11,7 +11,11 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TEAM = "Production Design"
-MEMBERS = ["Vinitha", "Vadivel", "Nirmal", "Karthi", "Jayaprakash", "Vidhya"]
+MEMBERS = ["-- Select --","Vinitha","Vadivel","Nirmal","Karthi","Jayaprakash","Vidhya"]
+COMPONENTS = ["-- Select --","Content Email","Digital Banners","Weekend","Edits","Break",
+              "Others","Meeting","Innovation","Round 2 Banners","Leave",
+              "Internal Requests","Promo Creative","Social Requests",
+              "Landing Pages","Category Banners","Image Requests"]
 
 tab1, tab2 = st.tabs(["📝 Production Design", "📊 Visuals"])
 
@@ -25,12 +29,7 @@ with tab1:
     with col1:
         member = st.selectbox("Member", MEMBERS, key="member_field")
     with col2:
-        component = st.selectbox("Component", [
-            "Content Email","Digital Banners","Weekend","Edits","Break",
-            "Others","Meeting","Innovation","Round 2 Banners","Leave",
-            "Internal Requests","Promo Creative","Social Requests",
-            "Landing Pages","Category Banners","Image Requests"
-        ], key="component_field")
+        component = st.selectbox("Component", COMPONENTS, key="component_field")
 
     col3, col4 = st.columns(2)
     with col3:
@@ -47,7 +46,7 @@ with tab1:
     comments = st.text_area("Comments", key="comments_field")
 
     if st.button("Submit"):
-        if date:
+        if date and member != "-- Select --" and component != "-- Select --":
             duration_minutes = hours * 60 + minutes
             new_row = {
                 "team": TEAM,
@@ -69,8 +68,8 @@ with tab1:
 
                     # Clear form fields
                     st.session_state["date_field"] = datetime.today().date()
-                    st.session_state["member_field"] = MEMBERS[0]
-                    st.session_state["component_field"] = "Content Email"
+                    st.session_state["member_field"] = "-- Select --"
+                    st.session_state["component_field"] = "-- Select --"
                     st.session_state["tickets_field"] = 0
                     st.session_state["banners_field"] = 0
                     st.session_state["hours_field"] = 0
@@ -80,6 +79,8 @@ with tab1:
                     st.warning("Insert may not have returned data")
             except Exception as e:
                 st.error(f"Error inserting: {e}")
+        else:
+            st.warning("Please select a member and component before submitting.")
 
     # Fetch all rows from Supabase
     try:
