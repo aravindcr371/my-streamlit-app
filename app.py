@@ -8,7 +8,7 @@ from supabase import create_client
 # You can hard-code your URL and anon key here, or better:
 # put them in Streamlit Cloud Secrets (Settings → Secrets).
 SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  # your anon key
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"  # your anon key
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
