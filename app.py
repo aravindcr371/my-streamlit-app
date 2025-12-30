@@ -126,7 +126,82 @@ with tab2:
     else:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
-        # (Visuals logic same as before...)
+
+        if view == "Week-to-Date":
+            current_week = datetime.now().isocalendar()[1]
+            filtered = df[df["week"] == current_week]
+            grouped = filtered.groupby("date")[["tickets","banners"]].sum().reset_index()
+            x_field = alt.X("date:T", title="Date")
+        elif view == "Month-to-Date":
+            current_month = datetime.now().month
+            filtered = df[df["date"].dt.month == current_month]
+            grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index()
+            x_field = alt.X("week:O", title="Week Number")
+        else:
+            prev_month = datetime.now().month - 1 or 12
+            filtered = df[df["date"].dt.month == prev_month]
+            grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index()
+            x_field = alt.X("week:O", title="Week Number")
+
+        tickets_chart = alt.Chart(grouped).mark_bar(color="steelblue").encode(
+            x=x_field,
+            y=alt.Y("tickets:Q", title="Tickets"),
+            tooltip=["tickets"]
+        )
+        tickets_labels = alt.Chart(grouped).mark_text(
+            align="center", baseline="bottom", dy=-2, color="black"
+        ).encode(
+            x=x_field,
+            y="tickets:Q",
+            text="tickets:Q"
+        )
+        st.altair_chart(tickets_chart + tickets_labels, use_container_width=True)
+
+        banners_chart = alt.Chart(grouped).mark_bar(color="orange").encode(
+            x=x_field,
+            y=alt.Y("banners:Q", title="Banners"),
+            tooltip=["banners"]
+        )
+        banners_labels = alt.Chart(grouped).mark_text(
+            align="center", baseline="bottom", dy=-2, color="black"
+        ).encode(
+            x=x_field,
+            y="banners:Q",
+            text="banners:Q"
+        )
+        st.altair_chart(banners_chart + banners_labels, use_container_width=True)
+
+        st.subheader("👥 Member-wise Tickets")
+        member_grp = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
+
+        tickets_chart = alt.Chart(member_grp).mark_bar(color="steelblue").encode(
+            x=alt.X("member:N", title="Member"),
+            y=alt.Y("tickets:Q", title="Total Tickets"),
+            tooltip=["member", "tickets"]
+        )
+        tickets_labels = alt.Chart(member_grp).mark_text(
+            align="center", baseline="bottom", dy=-2, color="black"
+        ).encode(
+            x="member:N",
+            y="tickets:Q",
+            text="tickets:Q"
+        )
+        st.altair_chart(tickets_chart + tickets_labels, use_container_width=True)
+
+        st.subheader("👥 Member-wise Banners")
+        banners_chart = alt.Chart(member_grp).mark_bar(color="orange").encode(
+            x=alt.X("member:N", title="Member"),
+            y=alt.Y("banners:Q", title="Total Banners"),
+            tooltip=["member", "banners"]
+        )
+        banners_labels = alt.Chart(member_grp).mark_text(
+            align="center", baseline="bottom", dy=-2, color="black"
+        ).encode(
+            x="member:N",
+            y="banners:Q",
+            text="banners:Q"
+        )
+        st.altair_chart(banners_chart + banners_labels, use_container_width=True)
 
 # ------------------ TAB 3 ------------------
 with tab3:
@@ -148,8 +223,8 @@ with tab3:
 
         # Productive excludes Break and Leave
         df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
-        # Leave hours directly from component
-        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
+        # Leave hours directly from the component
+        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
         view = st.radio("Select Period", ["Last Week","Week-to-Date","Last Month","Month-to-Date"])
 
@@ -178,27 +253,41 @@ with tab3:
             st.info("No data for the selected period.")
         else:
             agg = period_df.groupby("member").agg(
-                utilized_hours=("productive_hours","sum"),
-                leave_hours=("leave_hours","sum")
+                utilized_hours=("productive_hours", "sum"),
+                leave_hours=("leave_hours", "sum")
             ).reset_index()
 
+            # Total hours baseline per member = period baseline - leave hours
             agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
+
+            # Utilization % per member = utilized_hours / total_hours
             agg["utilization_pct"] = (
-                (agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100
+                (agg["utilized_hours"] / agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
             ).round(1)
 
             member_stats = agg.rename(columns={
-                "member":"Name",
-                "leave_hours":"Leave hours",
-                "utilized_hours":"Utilized hours",
-                "total_hours":"Total hours",
-                "utilization_pct":"Utilization %"
+                "member": "Name",
+                "leave_hours": "Leave hours",
+                "utilized_hours": "Utilized hours",
+                "total_hours": "Total hours",
+                "utilization_pct": "Utilization %"
             })
 
             st.subheader("Member Utilization")
-            st.dataframe(member_stats[["Name","Total hours","Leave hours","Utilized hours","Utilization %"]])
+            st.dataframe(member_stats[["Name", "Total hours", "Leave hours", "Utilized hours", "Utilization %"]])
 
             team_total_hours = member_stats["Total hours"].sum()
             team_leave_hours = member_stats["Leave hours"].sum()
             team_utilized_hours = member_stats["Utilized hours"].sum()
-            team_utilization_pct = (team_utilized_hours/team_total_hours*100 if team_total_hours>0
+            team_utilization_pct = (team_utilized_hours / team_total_hours * 100) if team_total_hours > 0 else 0
+
+            team_stats = pd.DataFrame({
+                "Team": [TEAM],
+                "Total hours": [team_total_hours],
+                "Leave hours": [team_leave_hours],
+                "Utilized hours": [team_utilized_hours],
+                "Utilization %": [round(team_utilization_pct, 1)]
+            })
+
+            st.subheader("Team Utilization")
+            st.dataframe(team_stats)
