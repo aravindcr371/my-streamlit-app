@@ -30,18 +30,8 @@ if st.session_state.get("do_reset"):
 
 # ------------------ Hard-coded working days per month ------------------
 WORKING_DAYS = {
-    1: 20,  # January
-    2: 19,  # February
-    3: 22,  # March
-    4: 21,  # April
-    5: 22,  # May
-    6: 21,  # June
-    7: 23,  # July
-    8: 22,  # August
-    9: 21,  # September
-    10: 22, # October
-    11: 21, # November
-    12: 22  # December
+    1: 20, 2: 19, 3: 22, 4: 21, 5: 22, 6: 21,
+    7: 23, 8: 22, 9: 21, 10: 22, 11: 21, 12: 22
 }
 
 def baseline_hours_for_month(month: int) -> int:
@@ -82,11 +72,12 @@ with tab1:
     if submitted:
         if isinstance(date_value, (datetime, date_cls)) and member != "-- Select --" and component != "-- Select --":
             duration_minutes = int(hours) * 60 + int(minutes)
+            d = date_value if isinstance(date_value, date_cls) else date_value.date()
             new_row = {
                 "team": TEAM,
-                "date": (date_value if isinstance(date_value, date_cls) else date_value.date()).isoformat(),
-                "week": (date_value if isinstance(date_value, date_cls) else date_value.date()).isocalendar()[1],
-                "month": (date_value if isinstance(date_value, date_cls) else date_value.date()).strftime("%B"),
+                "date": d.isoformat(),
+                "week": d.isocalendar()[1],
+                "month": d.strftime("%B"),
                 "member": member,
                 "component": component,
                 "tickets": int(tickets),
@@ -143,59 +134,71 @@ with tab3:
 
     try:
         response = supabase.table("creative").select("*").execute()
-        df = pd.DataFrame(response.data)
+        raw = pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"Error fetching data: {e}")
-        df = pd.DataFrame()
+        raw = pd.DataFrame()
 
-    if df.empty:
+    if raw.empty:
         st.info("No data available")
     else:
+        df = raw.copy()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df["hours"] = df["duration"] / 60.0
-        df["productive_hours"] = df.apply(lambda r: 0 if r["component"]=="Break" else r["hours"], axis=1)
-        df["leave_hours"] = df.apply(lambda r: 8 if r["component"]=="Leave" else 0, axis=1)
+
+        # Productive excludes Break and Leave
+        df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
+        # Leave hours directly from component
+        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
 
         view = st.radio("Select Period", ["Last Week","Week-to-Date","Last Month","Month-to-Date"])
 
-        current_week = datetime.now().isocalendar()[1]
-        current_month = datetime.now().month
+        now = datetime.now()
+        current_week = now.isocalendar()[1]
+        current_month = now.month
 
-        if view=="Last Week":
-            target_week = current_week-1
-            filtered = df[df["week"]==target_week]
-            baseline_hours = len(filtered["date"].unique())*8
-        elif view=="Week-to-Date":
-            filtered = df[df["week"]==current_week]
-            baseline_hours = len(filtered["date"].unique())*8
-        elif view=="Last Month":
-            target_month = current_month-1 or 12
-            filtered = df[df["date"].dt.month==target_month]
-            baseline_hours = baseline_hours_for_month(target_month)
-        else: # MTD
-            filtered = df[df["date"].dt.month==current_month]
-            baseline_hours = baseline_hours_for_month(current_month)
+        if view == "Last Week":
+            target_week = current_week - 1
+            period_df = df[df["week"] == target_week]
+            period_days = period_df["date"].dt.normalize().nunique()
+            baseline_hours_period = period_days * 8
+        elif view == "Week-to-Date":
+            period_df = df[df["week"] == current_week]
+            period_days = period_df["date"].dt.normalize().nunique()
+            baseline_hours_period = period_days * 8
+        elif view == "Last Month":
+            target_month = current_month - 1 or 12
+            period_df = df[df["date"].dt.month == target_month]
+            baseline_hours_period = baseline_hours_for_month(target_month)
+        else:  # Month-to-Date
+            period_df = df[df["date"].dt.month == current_month]
+            baseline_hours_period = baseline_hours_for_month(current_month)
 
-        member_stats = filtered.groupby("member").agg(
-            total_hours=("hours","sum"),
-            leave_hours=("leave_hours","sum"),
-            utilized_hours=("productive_hours","sum")
-        ).reset_index()
+        if period_df.empty:
+            st.info("No data for the selected period.")
+        else:
+            agg = period_df.groupby("member").agg(
+                utilized_hours=("productive_hours","sum"),
+                leave_hours=("leave_hours","sum")
+            ).reset_index()
 
-        member_stats["available_hours"] = baseline_hours - member_stats["leave_hours"]
-        member_stats["utilization_pct"] = (member_stats["utilized_hours"]/member_stats["available_hours"]*100).round(1)
+            agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
+            agg["utilization_pct"] = (
+                (agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100
+            ).round(1)
 
-        st.subheader("Member Utilization")
-        st.dataframe(member_stats[["member","total_hours","leave_hours","utilized_hours","utilization_pct"]])
+            member_stats = agg.rename(columns={
+                "member":"Name",
+                "leave_hours":"Leave hours",
+                "utilized_hours":"Utilized hours",
+                "total_hours":"Total hours",
+                "utilization_pct":"Utilization %"
+            })
 
-        team_stats = pd.DataFrame({
-            "team":[TEAM],
-            "total_hours":[member_stats["total_hours"].sum()],
-            "leave_hours":[member_stats["leave_hours"].sum()],
-            "utilized_hours":[member_stats["utilized_hours"].sum()],
-            "available_hours":[baseline_hours*len(member_stats)-member_stats["leave_hours"].sum()]
-        })
-        team_stats["utilization_pct"] = (team_stats["utilized_hours"]/team_stats["available_hours"]*100).round(1)
+            st.subheader("Member Utilization")
+            st.dataframe(member_stats[["Name","Total hours","Leave hours","Utilized hours","Utilization %"]])
 
-        st.subheader("Team Utilization")
-        st.dataframe(team_stats[["team","total_hours","leave_hours","utilized_hours","utilization_pct"]])
+            team_total_hours = member_stats["Total hours"].sum()
+            team_leave_hours = member_stats["Leave hours"].sum()
+            team_utilized_hours = member_stats["Utilized hours"].sum()
+            team_utilization_pct = (team_utilized_hours/team_total_hours*100 if team_total_hours>0
