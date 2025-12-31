@@ -29,8 +29,8 @@ if st.session_state.get("do_reset"):
     st.session_state["do_reset"] = False
 
 # ------------------ Public Holidays ------------------
-# Hard-code public holidays here as a set of datetime.date objects
 PUBLIC_HOLIDAYS = {
+    date(2024, 11, 14),  # Example: Nov 14, 2024
     date(2024, 12, 25),  # Example: Dec 25, 2024
     date(2025, 1, 1),    # Example: Jan 1, 2025
     # Add more dates as needed
@@ -144,58 +144,52 @@ with tab3:
         df = raw.copy()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df["hours"] = df["duration"] / 60.0
-
         df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
         df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
 
-        view = st.radio("Select Period", ["Last Week","Week-to-Date","Last Month","Month-to-Date"])
-
         today = datetime.now().date()
         current_weekday = today.weekday()
-        current_month = today.month
-        current_year = today.year
+        current_week = today.isocalendar()[1]
+        current_year = today.isocalendar()[0]
 
+        # Helper: weekdays excluding weekends and public holidays
         def working_days_between(start, end):
             days = pd.date_range(start, end, freq="D")
             return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
-        if view == "Week-to-Date":
+        # --- Week selector ---
+        df["iso_year_week"] = df["date"].dt.strftime("%G-W%V")
+        available_weeks = sorted(df["iso_year_week"].unique())
+
+        prev_week = current_week - 1 if current_week > 1 else 52
+        prev_year = current_year if current_week > 1 else current_year - 1
+
+        week_options = [f"Current Week ({current_year}-W{current_week:02d})",
+                        f"Previous Week ({prev_year}-W{prev_week:02d})"]
+
+        for wk in available_weeks:
+            if wk not in [f"{current_year}-W{current_week:02d}", f"{prev_year}-W{prev_week:02d}"]:
+                week_options.append(wk)
+
+        week_choice = st.selectbox("Select Week", week_options)
+
+        # --- Month selector ---
+        df["year_month"] = df["date"].dt.to_period("M")
+        available_months = sorted(df["year_month"].unique())
+        available_months = [m for m in available_months if (m.year > 2024 or (m.year == 2024 and m.month >= 11))]
+        month_labels = [f"{m.strftime('%B %Y')}" for m in available_months]
+        month_choice = st.selectbox("Select Month", month_labels)
+        month_mode = st.radio("Month Mode", ["MTD", "Previous Month"])
+
+        # --- WEEK LOGIC ---
+        if week_choice.startswith("Current Week"):
             start = today - timedelta(days=current_weekday)
             weekdays = working_days_between(start, today)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
             baseline_hours_period = len(weekdays) * 8
-
-        elif view == "Last Week":
+        elif week_choice.startswith("Previous Week"):
             start = today - timedelta(days=current_weekday + 7)
             end = start + timedelta(days=4)
             weekdays = working_days_between(start, end)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
             baseline_hours_period = len(weekdays) * 8
-
-        elif view == "Month-to-Date":
-            start = datetime(current_year, current_month, 1).date()
-            weekdays = working_days_between(start, today)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
-
-        else:  # Last Month
-            prev_month = current_month - 1 if current_month > 1 else 12
-            year = current_year if current_month > 1 else current_year - 1
-            start = datetime(year, prev_month, 1).date()
-            if prev_month == 12:
-                end = datetime(year, 12, 31).date()
-            else:
-                end = (datetime(year, prev_month + 1, 1) - timedelta(days=1)).date()
-            weekdays = working_days_between(start, end)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
-
-        if period_df.empty:
-            st.info("No data for the selected period.")
-        else:
-            agg = period_df.groupby("member").agg(
-                utilized_hours=("productive_hours","sum"),
-                leave_hours=("leave_hours","sum")
-            ).reset_index()
-
-            agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
