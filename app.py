@@ -7,7 +7,6 @@ from supabase import create_client
 # ------------------ SUPABASE SETUP ------------------
 SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"   # TODO: replace
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"                      # TODO: replace
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TEAM = "Production Design"
@@ -28,13 +27,13 @@ if st.session_state.get("do_reset"):
         st.session_state.pop(k, None)
     st.session_state["do_reset"] = False
 
-# ------------------ Public holidays ------------------
-# Add or edit your holiday dates here (Saturdays/Sundays are always ignored separately)
+# ------------------ Public Holidays ------------------
+# Add or edit your holiday dates here (Saturdays/Sundays are ignored separately)
 PUBLIC_HOLIDAYS = {
     date(2024, 11, 14),  # Example: Nov 14, 2024
     date(2024, 12, 25),  # Example: Dec 25, 2024
     date(2025, 1, 1),    # Example: Jan 1, 2025
-    # Add more dates as needed...
+    # Add more dates as needed
 }
 
 # ------------------ Tabs ------------------
@@ -106,6 +105,7 @@ with tab1:
         df = pd.DataFrame()
 
     if not df.empty:
+        # Show only columns starting from "team" if extra metadata exists
         if "team" in df.columns:
             start_index = df.columns.get_loc("team")
             df = df.iloc[:, start_index:]
@@ -133,8 +133,8 @@ with tab2:
             grouped = filtered.groupby("date")[["tickets","banners"]].sum().reset_index()
             x_field = alt.X("date:T", title="Date")
         elif view == "Month-to-Date":
-            current_month = datetime.now().month
-            filtered = df[df["date"].dt.month == current_month]
+            now = datetime.now()
+            filtered = df[(df["date"].dt.month == now.month) & (df["date"].dt.year == now.year)]
             grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index()
             x_field = alt.X("week:O", title="Week number")
         else:
@@ -203,10 +203,9 @@ with tab3:
             days = pd.date_range(start, end, freq="D")
             return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
-        # Build single dropdown options (weeks + months from data)
+        # Build single dropdown options (weeks + months from data, Nov 2024 onward)
         df["year_month"] = df["date"].dt.to_period("M")
         available_months = sorted(df["year_month"].unique())
-        # Only months from Nov 2024 onward
         available_months = [m for m in available_months if (m.year > 2024 or (m.year == 2024 and m.month >= 11))]
         month_labels = [f"{m.strftime('%B %Y')}" for m in available_months]
 
@@ -246,20 +245,20 @@ with tab3:
 
         # Filter df to period weekdays
         period_df = df[df["date"].dt.normalize().isin(weekdays)]
-        baseline_hours_period = len(weekdays) * 8  # same baseline for both utilization & occupancy
+        baseline_hours_period = len(weekdays) * 8  # same baseline for utilization & occupancy
 
-        # Build side-by-side tables
+        # Side-by-side member tables
         c1, c2 = st.columns(2)
 
         if period_df.empty:
             with c1:
-                st.subheader("Utilization")
+                st.subheader("Member Utilization")
                 st.info("No data for the selected period.")
             with c2:
-                st.subheader("Occupancy")
+                st.subheader("Member Occupancy")
                 st.info("No data for the selected period.")
         else:
-            # Aggregate for utilization
+            # Utilization aggregation
             util_agg = period_df.groupby("member").agg(
                 utilized_hours=("utilization_hours", "sum"),
                 leave_hours=("leave_hours", "sum")
@@ -268,7 +267,7 @@ with tab3:
             util_agg["utilization_%"] = (
                 (util_agg["utilized_hours"] / util_agg["total_hours"]).where(util_agg["total_hours"] > 0, 0) * 100
             ).round(1)
-            util_member_stats = util_agg.rename(columns={
+            util_stats = util_agg.rename(columns={
                 "member": "Name",
                 "leave_hours": "Leave hours",
                 "utilized_hours": "Utilized hours",
@@ -276,7 +275,7 @@ with tab3:
                 "utilization_%": "Utilization %"
             })
 
-            # Aggregate for occupancy (exclude Meeting additionally)
+            # Occupancy aggregation
             occ_agg = period_df.groupby("member").agg(
                 occupied_hours=("occupancy_hours", "sum"),
                 leave_hours=("leave_hours", "sum")
@@ -285,7 +284,7 @@ with tab3:
             occ_agg["occupancy_%"] = (
                 (occ_agg["occupied_hours"] / occ_agg["total_hours"]).where(occ_agg["total_hours"] > 0, 0) * 100
             ).round(1)
-            occ_member_stats = occ_agg.rename(columns={
+            occ_stats = occ_agg.rename(columns={
                 "member": "Name",
                 "leave_hours": "Leave hours",
                 "occupied_hours": "Occupied hours",
@@ -293,53 +292,56 @@ with tab3:
                 "occupancy_%": "Occupancy %"
             })
 
-            # Display side-by-side member tables
             with c1:
-                st.subheader("Utilization (excludes Break, Leave)")
+                st.subheader("Member Utilization")
+                # Full width here:
                 st.dataframe(
-                    util_member_stats[["Name","Total hours","Leave hours","Utilized hours","Utilization %"]],
+                    util_stats[["Name","Total hours","Leave hours","Utilized hours","Utilization %"]],
                     use_container_width=True
                 )
 
             with c2:
-                st.subheader("Occupancy (excludes Break, Leave, Meeting)")
+                st.subheader("Member Occupancy")
+                # Full width here:
                 st.dataframe(
-                    occ_member_stats[["Name","Total hours","Leave hours","Occupied hours","Occupancy %"]],
+                    occ_stats[["Name","Total hours","Leave hours","Occupied hours","Occupancy %"]],
                     use_container_width=True
                 )
 
-            # Team-level summaries (below)
-            util_team_total_hours = util_member_stats["Total hours"].sum()
-            util_team_leave_hours = util_member_stats["Leave hours"].sum()
-            util_team_utilized_hours = util_member_stats["Utilized hours"].sum()
-            util_team_pct = (util_team_utilized_hours / util_team_total_hours * 100) if util_team_total_hours > 0 else 0
-
-            occ_team_total_hours = occ_member_stats["Total hours"].sum()
-            occ_team_leave_hours = occ_member_stats["Leave hours"].sum()
-            occ_team_occupied_hours = occ_member_stats["Occupied hours"].sum()
-            occ_team_pct = (occ_team_occupied_hours / occ_team_total_hours * 100) if occ_team_total_hours > 0 else 0
-
+            # Team-level summaries below
             st.markdown("---")
             ct1, ct2 = st.columns(2)
+
+            util_team_total = util_stats["Total hours"].sum()
+            util_team_leave = util_stats["Leave hours"].sum()
+            util_team_utilized = util_stats["Utilized hours"].sum()
+            util_team_pct = (util_team_utilized / util_team_total * 100) if util_team_total > 0 else 0
+
+            occ_team_total = occ_stats["Total hours"].sum()
+            occ_team_leave = occ_stats["Leave hours"].sum()
+            occ_team_occupied = occ_stats["Occupied hours"].sum()
+            occ_team_pct = (occ_team_occupied / occ_team_total * 100) if occ_team_total > 0 else 0
 
             with ct1:
                 st.subheader("Team Utilization")
                 util_team_df = pd.DataFrame({
                     "Team": [TEAM],
-                    "Total hours": [round(util_team_total_hours, 2)],
-                    "Leave hours": [round(util_team_leave_hours, 2)],
-                    "Utilized hours": [round(util_team_utilized_hours, 2)],
+                    "Total hours": [round(util_team_total, 2)],
+                    "Leave hours": [round(util_team_leave, 2)],
+                    "Utilized hours": [round(util_team_utilized, 2)],
                     "Utilization %": [round(util_team_pct, 1)]
                 })
+                # Full width here:
                 st.dataframe(util_team_df, use_container_width=True)
 
             with ct2:
                 st.subheader("Team Occupancy")
                 occ_team_df = pd.DataFrame({
                     "Team": [TEAM],
-                    "Total hours": [round(occ_team_total_hours, 2)],
-                    "Leave hours": [round(occ_team_leave_hours, 2)],
-                    "Occupied hours": [round(occ_team_occupied_hours, 2)],
+                    "Total hours": [round(occ_team_total, 2)],
+                    "Leave hours": [round(occ_team_leave, 2)],
+                    "Occupied hours": [round(occ_team_occupied, 2)],
                     "Occupancy %": [round(occ_team_pct, 1)]
                 })
+                # Full width here:
                 st.dataframe(occ_team_df, use_container_width=True)
