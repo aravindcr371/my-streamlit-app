@@ -54,19 +54,22 @@ def build_period_options_and_months(df_dates: pd.Series):
     current_year = today.year
 
     year_month = pd.to_datetime(df_dates, errors="coerce").dt.to_period("M")
-    available_months = sorted([m for m in year_month.unique() if (m.year > 2024 or (m.year == 2024 and m.month >= 11))])
+    available_months = sorted([m for m in year_month.unique()
+                               if (m.year > 2024 or (m.year == 2024 and m.month >= 11))])
 
     prev_month = current_month - 1 if current_month > 1 else 12
     prev_year = current_year if current_month > 1 else current_year - 1
     previous_month_period = pd.Period(f"{prev_year}-{prev_month:02d}")
 
+    # Exclude previous month from month labels to avoid duplication with "Previous Month"
     filtered_months = [m for m in available_months if m != previous_month_period]
     month_labels = [f"{m.strftime('%B %Y')}" for m in filtered_months]
 
     options = ["Current Week", "Previous Week", "Current Month", "Previous Month"] + month_labels
     return options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year
 
-def compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year):
+def compute_weekdays_for_choice(choice, filtered_months, month_labels,
+                                previous_month_period, today, current_weekday, current_month, current_year):
     if choice == "Current Week":
         start = today - timedelta(days=current_weekday)
         end = today
@@ -182,8 +185,9 @@ with tab2:
     else:
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
         options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_months(vdf["date"])
-        choice = st.selectbox("Select period", options)
-        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year)
+        choice = st.selectbox("Select period", options, key="tab2_period")  # <== unique key
+        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period,
+                                               today, current_weekday, current_month, current_year)
         filtered = vdf[vdf["date"].dt.normalize().isin(weekdays)]
 
         if filtered.empty:
@@ -192,41 +196,63 @@ with tab2:
             week_grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index().sort_values("week")
             member_grouped = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
 
-            def bar_with_labels(df, x_field, y_field, color):
-                bar = alt.Chart(df).mark_bar(color=color).encode(x=x_field, y=y_field)
-                text = alt.Chart(df).mark_text(align="center", baseline="bottom", dy=-5).encode(x=x_field, y=y_field, text=y_field)
+            def bar_with_labels(df, x_field, y_field, color, x_type="N", y_type="Q", x_title="", y_title=""):
+                bar = alt.Chart(df).mark_bar(color=color).encode(
+                    x=alt.X(f"{x_field}:{x_type}", title=x_title),
+                    y=alt.Y(f"{y_field}:{y_type}", title=y_title)
+                )
+                text = alt.Chart(df).mark_text(align="center", baseline="bottom", dy=-5, color="black").encode(
+                    x=f"{x_field}:{x_type}",
+                    y=f"{y_field}:{y_type}",
+                    text=f"{y_field}:{y_type}"
+                )
                 return bar + text
 
             r1c1, r1c2 = st.columns(2)
             with r1c1:
                 st.subheader("Tickets by week")
-                st.altair_chart(bar_with_labels(week_grouped, "week", "tickets", "steelblue"), use_container_width=True)
+                chart = bar_with_labels(week_grouped, "week", "tickets", "steelblue", x_type="O", y_type="Q", x_title="Week", y_title="Tickets")
+                st.altair_chart(chart, use_container_width=True)
             with r1c2:
                 st.subheader("Banners by week")
-                st.altair_chart(bar_with_labels(week_grouped, "week", "banners", "orange"), use_container_width=True)
+                chart = bar_with_labels(week_grouped, "week", "banners", "orange", x_type="O", y_type="Q", x_title="Week", y_title="Banners")
+                st.altair_chart(chart, use_container_width=True)
 
             r2c1, r2c2 = st.columns(2)
             with r2c1:
                 st.subheader("Tickets by member")
-                st.altair_chart(bar_with_labels(member_grouped, "member", "tickets", "steelblue"), use_container_width=True)
+                chart = bar_with_labels(member_grouped, "member", "tickets", "steelblue", x_type="N", y_type="Q", x_title="Member", y_title="Tickets")
+                st.altair_chart(chart, use_container_width=True)
             with r2c2:
                 st.subheader("Banners by member")
-                st.altair_chart(bar_with_labels(member_grouped, "member", "banners", "orange"), use_container_width=True)
+                chart = bar_with_labels(member_grouped, "member", "banners", "orange", x_type="N", y_type="Q", x_title="Member", y_title="Banners")
+                st.altair_chart(chart, use_container_width=True)
 
             st.subheader("By Component (Sum of Tickets + Banners)")
             component_grouped = filtered.groupby("component")[["tickets","banners"]].sum().reset_index()
             component_grouped["component"] = component_grouped["component"].fillna("Unspecified")
+            component_grouped.loc[component_grouped["component"].eq(""), "component"] = "Unspecified"
             component_grouped["total"] = component_grouped["tickets"] + component_grouped["banners"]
             component_grouped = component_grouped.sort_values("total", ascending=False)
 
             bar = alt.Chart(component_grouped).mark_bar(color="#4C78A8").encode(
+                x=alt.X("component:N", title="Component", sort=alt.SortField(field="total", order="descending")),
+                y=alt.Y("total:Q", title="Sum of Tickets + Banners")
+            ).properties(height=400)
+            text = alt.Chart(component_grouped).mark_text(align="center", baseline="bottom", dy=-5, color="black").encode(
                 x=alt.X("component:N", sort=alt.SortField(field="total", order="descending")),
-                y="total:Q"
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q")
             )
-            text = alt.Chart(component_grouped).mark_text(align="center", baseline="bottom", dy=-5).encode(
-                x="component:N", y="total:Q", text="total:Q"
+            chart = (bar + text).encode(
+                tooltip=[
+                    alt.Tooltip("component:N", title="Component"),
+                    alt.Tooltip("tickets:Q", title="Tickets"),
+                    alt.Tooltip("banners:Q", title="Banners"),
+                    alt.Tooltip("total:Q", title="Total"),
+                ]
             )
-            st.altair_chart(bar + text, use_container_width=True)
+            st.altair_chart(chart, use_container_width=True)
 
 # ------------------ TAB 3 ------------------
 with tab3:
@@ -249,31 +275,78 @@ with tab3:
         df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
         options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_months(df["date"])
-        choice = st.selectbox("Select period", options)
-        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year)
+        choice = st.selectbox("Select period", options, key="tab3_period")  # <== unique key
+
+        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period,
+                                               today, current_weekday, current_month, current_year)
+
         period_df = df[df["date"].dt.normalize().isin(weekdays)]
         baseline_hours_period = len(weekdays) * 8
 
         if period_df.empty:
             st.info("No data for the selected period.")
         else:
-            agg = period_df.groupby("member").agg(utilized_hours=("utilization_hours","sum"), occupied_hours=("occupancy_hours","sum"), leave_hours=("leave_hours","sum")).reset_index()
+            agg = period_df.groupby("member").agg(
+                utilized_hours=("utilization_hours","sum"),
+                occupied_hours=("occupancy_hours","sum"),
+                leave_hours=("leave_hours","sum")
+            ).reset_index()
+
             agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
-            agg["utilization_%"] = ((agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100).round(1)
-            agg["occupancy_%"] = ((agg["occupied_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100).round(1)
-            agg = agg.round(1)
 
-            merged_stats = agg.rename(columns={"member":"Name","total_hours":"Total Hours","leave_hours":"Leave Hours","utilized_hours":"Utilized Hours","occupied_hours":"Occupied Hours","utilization_%":"Utilization %","occupancy_%":"Occupancy %"})
+            # Percentages to 1 decimal
+            agg["utilization_%"] = (
+                (agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
+            ).round(1)
+            agg["occupancy_%"] = (
+                (agg["occupied_hours"]/agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
+            ).round(1)
+
+            # Round hours to 1 decimal
+            agg["utilized_hours"] = agg["utilized_hours"].round(1)
+            agg["occupied_hours"] = agg["occupied_hours"].round(1)
+            agg["leave_hours"] = agg["leave_hours"].round(1)
+            agg["total_hours"] = agg["total_hours"].round(1)
+
+            merged_stats = agg.rename(columns={
+                "member": "Name",
+                "total_hours": "Total Hours",
+                "leave_hours": "Leave Hours",
+                "utilized_hours": "Utilized Hours",
+                "occupied_hours": "Occupied Hours",
+                "utilization_%": "Utilization %",
+                "occupancy_%": "Occupancy %"
+            })
+
+            # Ensure all numeric columns are to 1 decimal
+            numeric_cols = ["Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]
+            for col in numeric_cols:
+                merged_stats[col] = merged_stats[col].astype(float).round(1)
+
             st.subheader("Member Utilization & Occupancy")
-            st.dataframe(merged_stats, use_container_width=True)
+            st.dataframe(
+                merged_stats[["Name","Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]],
+                use_container_width=True
+            )
 
-            team_total = merged_stats["Total Hours"].sum()
-            team_leave = merged_stats["Leave Hours"].sum()
-            team_utilized = merged_stats["Utilized Hours"].sum()
-            team_occupied = merged_stats["Occupied Hours"].sum()
-            team_util_pct = (team_utilized/team_total*100) if team_total>0 else 0
-            team_occ_pct = (team_occupied/team_total*100) if team_total>0 else 0
+            # Team-level summary (rounded to 1 decimal)
+            team_total = float(merged_stats["Total Hours"].sum())
+            team_leave = float(merged_stats["Leave Hours"].sum())
+            team_utilized = float(merged_stats["Utilized Hours"].sum())
+            team_occupied = float(merged_stats["Occupied Hours"].sum())
 
-            team_df = pd.DataFrame({"Team":[TEAM],"Total Hours":[round(team_total,1)],"Leave Hours":[round(team_leave,1)],"Utilized Hours":[round(team_utilized,1)],"Occupied Hours":[round(team_occupied,1)],"Utilization %":[round(team_util_pct,1)],"Occupancy %":[round(team_occ_pct,1)]})
+            team_util_pct = (team_utilized / team_total * 100) if team_total > 0 else 0.0
+            team_occ_pct = (team_occupied / team_total * 100) if team_total > 0 else 0.0
+
+            team_df = pd.DataFrame({
+                "Team": [TEAM],
+                "Total Hours": [round(team_total, 1)],
+                "Leave Hours": [round(team_leave, 1)],
+                "Utilized Hours": [round(team_utilized, 1)],
+                "Occupied Hours": [round(team_occupied, 1)],
+                "Utilization %": [round(team_util_pct, 1)],
+                "Occupancy %": [round(team_occ_pct, 1)]
+            })
+
             st.subheader("Team Utilization & Occupancy")
             st.dataframe(team_df, use_container_width=True)
