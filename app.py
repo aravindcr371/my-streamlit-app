@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date, timedelta
 import altair as alt
+from datetime import datetime, date, timedelta
 from supabase import create_client
 
 # ------------------ Page config ------------------
@@ -100,16 +100,16 @@ with tab1:
 
     try:
         response = supabase.table("creative").select("*").execute()
-        df = pd.DataFrame(response.data)
+        df1 = pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"Error fetching data: {e}")
-        df = pd.DataFrame()
+        df1 = pd.DataFrame()
 
-    if not df.empty:
-        if "team" in df.columns:
-            start_index = df.columns.get_loc("team")
-            df = df.iloc[:, start_index:]
-        st.dataframe(df, use_container_width=True)
+    if not df1.empty:
+        if "team" in df1.columns:
+            start_index = df1.columns.get_loc("team")
+            df1 = df1.iloc[:, start_index:]
+        st.dataframe(df1, use_container_width=True)
 
 # ------------------ TAB 2 ------------------
 with tab2:
@@ -125,42 +125,49 @@ with tab2:
         st.info("No data available")
     else:
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
-        view = st.radio("Select view", ["Week-to-Date", "Month-to-Date", "Previous Month"])
+        view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
+
         if view == "Week-to-Date":
             current_week = datetime.now().isocalendar()[1]
             filtered = vdf[vdf["week"] == current_week]
-            grouped = filtered.groupby("date")[["tickets","banners"]].sum().reset_index()
-            x_field = alt.X("date:T", title="Date")
         elif view == "Month-to-Date":
             now = datetime.now()
             filtered = vdf[(vdf["date"].dt.month == now.month) & (vdf["date"].dt.year == now.year)]
-            grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index()
-            x_field = alt.X("week:O", title="Week")
         else:
             now = datetime.now()
             prev_month = now.month - 1 if now.month > 1 else 12
             prev_year = now.year if now.month > 1 else now.year - 1
             filtered = vdf[(vdf["date"].dt.month == prev_month) & (vdf["date"].dt.year == prev_year)]
-            grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index()
-            x_field = alt.X("week:O", title="Week")
 
-        if grouped.empty:
+        if filtered.empty:
             st.info("No visuals for selected view.")
         else:
-            t_chart = alt.Chart(grouped).mark_bar(color="steelblue").encode(
-                x=x_field, y=alt.Y("tickets:Q", title="Tickets"), tooltip=["tickets"]
-            )
-            b_chart = alt.Chart(grouped).mark_bar(color="orange").encode(
-                x=x_field, y=alt.Y("banners:Q", title="Banners"), tooltip=["banners"]
-            )
-            st.altair_chart(t_chart, use_container_width=True)
-            st.altair_chart(b_chart, use_container_width=True)
+            member_grouped = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("Tickets by member")
+                tickets_chart = alt.Chart(member_grouped).mark_bar(color="steelblue").encode(
+                    x=alt.X("member:N", title="Member", sort="-y"),
+                    y=alt.Y("tickets:Q", title="Tickets"),
+                    tooltip=["member","tickets"]
+                )
+                st.altair_chart(tickets_chart, use_container_width=True)
+
+            with c2:
+                st.subheader("Banners by member")
+                banners_chart = alt.Chart(member_grouped).mark_bar(color="orange").encode(
+                    x=alt.X("member:N", title="Member", sort="-y"),
+                    y=alt.Y("banners:Q", title="Banners"),
+                    tooltip=["member","banners"]
+                )
+                st.altair_chart(banners_chart, use_container_width=True)
 
 # ------------------ TAB 3 ------------------
 with tab3:
     st.title("Utilization & Occupancy")
 
-    # Fetch
+    # Fetch data
     try:
         response = supabase.table("creative").select("*").execute()
         raw = pd.DataFrame(response.data)
@@ -197,10 +204,11 @@ with tab3:
             return (date(y, m + 1, 1) - timedelta(days=1))
 
         def working_days_between(start: date, end: date):
+            # Mon–Fri, excluding PUBLIC_HOLIDAYS
             days = pd.date_range(start, end, freq="D")
             return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
-        # Single dropdown options
+        # Single dropdown options (weeks + months from data, Nov 2024 onward)
         df["year_month"] = df["date"].dt.to_period("M")
         available_months = sorted(df["year_month"].unique())
         available_months = [m for m in available_months if (m.year > 2024 or (m.year == 2024 and m.month >= 11))]
@@ -214,21 +222,26 @@ with tab3:
             start = today - timedelta(days=current_weekday)  # Monday
             end = today
             weekdays = working_days_between(start, end)
+
         elif choice == "Previous Week":
             start = today - timedelta(days=current_weekday + 7)  # prev Monday
             end = start + timedelta(days=4)                      # prev Friday
             weekdays = working_days_between(start, end)
+
         elif choice == "Current Month":
             start = date(current_year, current_month, 1)
             end = today
             weekdays = working_days_between(start, end)
+
         elif choice == "Previous Month":
             prev_month = current_month - 1 if current_month > 1 else 12
             prev_year = current_year if current_month > 1 else current_year - 1
             start = date(prev_year, prev_month, 1)
             end = end_of_month(prev_year, prev_month)
             weekdays = working_days_between(start, end)
+
         else:
+            # A specific month label from the data (e.g., "November 2024")
             sel_period = available_months[month_labels.index(choice)]
             sel_year, sel_mon = sel_period.year, sel_period.month
             start = date(sel_year, sel_mon, 1)
@@ -244,9 +257,9 @@ with tab3:
         else:
             # Aggregate both utilization and occupancy together
             agg = period_df.groupby("member").agg(
-                utilized_hours=("utilization_hours","sum"),
-                occupied_hours=("occupancy_hours","sum"),
-                leave_hours=("leave_hours","sum")
+                utilized_hours=("utilization_hours", "sum"),
+                occupied_hours=("occupancy_hours", "sum"),
+                leave_hours=("leave_hours", "sum")
             ).reset_index()
 
             agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
@@ -270,7 +283,7 @@ with tab3:
             st.subheader("Member Utilization & Occupancy")
             st.dataframe(
                 merged_stats[["Name","Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]],
-                use_container_width=True  # expand width
+                use_container_width=True
             )
 
             # Team-level summary
@@ -292,4 +305,4 @@ with tab3:
             })
 
             st.subheader("Team Utilization & Occupancy")
-            st.dataframe(team_df, use_container_width=True)  # expand width
+            st.dataframe(team_df, use_container_width=True)
