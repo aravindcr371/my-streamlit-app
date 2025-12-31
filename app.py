@@ -97,9 +97,6 @@ with tab1:
         df = pd.DataFrame()
 
     if not df.empty:
-        if "team" in df.columns:
-            start_index = df.columns.get_loc("team")
-            df = df.iloc[:, start_index:]
         st.dataframe(df)
 
 # ------------------ TAB 2 ------------------
@@ -117,7 +114,46 @@ with tab2:
     else:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
-        # (Visuals logic same as before...)
+
+        today = datetime.now().date()
+        current_weekday = today.weekday()
+        current_month = today.month
+        current_year = today.year
+
+        if view == "Week-to-Date":
+            start = today - timedelta(days=current_weekday)
+            mask = (df["date"].dt.date >= start) & (df["date"].dt.date <= today)
+        elif view == "Month-to-Date":
+            start = datetime(current_year, current_month, 1).date()
+            mask = (df["date"].dt.date >= start) & (df["date"].dt.date <= today)
+        else:  # Previous Month
+            prev_month = current_month - 1 or 12
+            year = current_year if current_month > 1 else current_year - 1
+            start = datetime(year, prev_month, 1).date()
+            end = (datetime(year, prev_month+1, 1) - timedelta(days=1)).date() if prev_month != 12 else datetime(year, 12, 31).date()
+            mask = (df["date"].dt.date >= start) & (df["date"].dt.date <= end)
+
+        period_df = df[mask]
+
+        if period_df.empty:
+            st.info("No data for selected period")
+        else:
+            agg = period_df.groupby("component").agg(
+                tickets=("tickets","sum"),
+                banners=("banners","sum"),
+                duration=("duration","sum")
+            ).reset_index()
+
+            agg["hours"] = (agg["duration"]/60).round(1)
+
+            st.dataframe(agg)
+
+            chart = alt.Chart(agg).mark_bar().encode(
+                x="component",
+                y="hours",
+                tooltip=["component","tickets","banners","hours"]
+            ).properties(title="Hours by Component")
+            st.altair_chart(chart, use_container_width=True)
 
 # ------------------ TAB 3 ------------------
 with tab3:
@@ -139,13 +175,12 @@ with tab3:
 
         # Productive excludes Break and Leave
         df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
-        # Leave hours directly from component
         df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
 
         view = st.radio("Select Period", ["Last Week","Week-to-Date","Last Month","Month-to-Date"])
 
         today = datetime.now().date()
-        current_weekday = today.weekday()  # Mon=0 ... Sun=6
+        current_weekday = today.weekday()
         current_month = today.month
         current_year = today.year
 
@@ -156,48 +191,25 @@ with tab3:
         if view == "Week-to-Date":
             start = today - timedelta(days=current_weekday)
             weekdays = weekdays_between(start, today)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
-
         elif view == "Last Week":
             start = today - timedelta(days=current_weekday+7)
-            end = start + timedelta(days=4)  # Mon–Fri
+            end = start + timedelta(days=4)
             weekdays = weekdays_between(start, end)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
-
         elif view == "Month-to-Date":
             start = datetime(current_year, current_month, 1).date()
             weekdays = weekdays_between(start, today)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
-
         else:  # Last Month
             prev_month = current_month - 1 or 12
             year = current_year if current_month > 1 else current_year - 1
             start = datetime(year, prev_month, 1).date()
-            if prev_month == 12:
-                end = datetime(year, 12, 31).date()
-            else:
-                end = (datetime(year, prev_month+1, 1) - timedelta(days=1)).date()
+            end = (datetime(year, prev_month+1, 1) - timedelta(days=1)).date() if prev_month != 12 else datetime(year, 12, 31).date()
             weekdays = weekdays_between(start, end)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+
+        period_df = df[df["date"].dt.normalize().isin(weekdays)]
+        baseline_hours_period = len(weekdays) * 8
 
         if period_df.empty:
             st.info("No data for the selected period.")
         else:
             agg = period_df.groupby("member").agg(
-                utilized_hours=("productive_hours","sum"),
-                leave_hours=("leave_hours","sum")
-            ).reset_index()
-
-            agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
-            agg["utilization_pct"] = (
-                (agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100
-            ).round(1)
-
-            member_stats = agg.rename(columns={
-                "member":"Name",
-                "leave_hours":"Leave hours",
-                "utilized_hours":"Utilized hours",
+                utilized_hours=("productive_hours
