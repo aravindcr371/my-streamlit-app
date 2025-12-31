@@ -30,6 +30,17 @@ if st.session_state.get("do_reset"):
         st.session_state.pop(k, None)
     st.session_state["do_reset"] = False
 
+# ------------------ Hard-coded working days for specific months ------------------
+# Only Nov 2024, Dec 2024, Jan 2025 are needed
+WORKING_DAYS = {
+    (2024, 11): 19,  # November 2024 weekdays
+    (2025, 1): 23    # January 2025 weekdays
+}
+
+def baseline_hours_for_month(year: int, month: int) -> int:
+    """Baseline hours for a full month based on hard-coded working days."""
+    return WORKING_DAYS.get((year, month), 20) * 8  # default 20 days if missing
+
 # ------------------ Tabs ------------------
 tab1, tab2, tab3 = st.tabs(["📝 Production Design", "📊 Visuals", "📈 Utilization & Occupancy"])
 
@@ -124,6 +135,7 @@ with tab2:
     if df.empty:
         st.info("No data available")
     else:
+        # Ensure date column is datetime for grouping/encoding
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
 
@@ -229,7 +241,7 @@ with tab3:
         # Productive excludes Break and Leave
         df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
         # Leave hours directly from component
-        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
+        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
         # Period selection
         view = st.radio("Select Period", ["Last Week","Week-to-Date","Last Month","Month-to-Date"])
@@ -239,14 +251,14 @@ with tab3:
         current_month = today.month
         current_year = today.year
 
-        # Helper: get all weekdays (Mon-Fri) between two dates inclusive
+        # Helper: get only weekdays (Mon-Fri) between two dates inclusive
         def weekdays_between(start, end):
             days = pd.date_range(start, end, freq="D")
-            return [d for d in days if d.weekday() < 5]
+            return [d.normalize() for d in days if d.weekday() < 5]
 
         # Build period date set and baseline hours
         if view == "Week-to-Date":
-            # Monday of current week → today (weekdays only)
+            # Monday of current week → today
             start = today - timedelta(days=current_weekday)
             weekdays = weekdays_between(start, today)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
@@ -279,15 +291,16 @@ with tab3:
                 end = (datetime(year, prev_month + 1, 1) - timedelta(days=1)).date()
             weekdays = weekdays_between(start, end)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+            # Baseline for last month comes from the hard-coded working days dictionary
+            baseline_hours_period = baseline_hours_for_month(year, prev_month)
 
         if period_df.empty:
             st.info("No data for the selected period.")
         else:
             # Aggregate member-level metrics
             agg = period_df.groupby("member").agg(
-                utilized_hours=("productive_hours","sum"),
-                leave_hours=("leave_hours","sum")
+                utilized_hours=("productive_hours", "sum"),
+                leave_hours=("leave_hours", "sum")
             ).reset_index()
 
             # Total hours baseline per member = period baseline - leave hours
@@ -295,19 +308,20 @@ with tab3:
 
             # Utilization % per member = utilized_hours / total_hours
             agg["utilization_pct"] = (
-                (agg["utilized_hours"]/agg["total_hours"]).where(agg["total_hours"]>0,0)*100
+                (agg["utilized_hours"] / agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
             ).round(1)
 
+            # Final display columns
             member_stats = agg.rename(columns={
-                "member":"Name",
-                "leave_hours":"Leave hours",
-                "utilized_hours":"Utilized hours",
-                "total_hours":"Total hours",
-                "utilization_pct":"Utilization %"
+                "member": "Name",
+                "leave_hours": "Leave hours",
+                "utilized_hours": "Utilized hours",
+                "total_hours": "Total hours",
+                "utilization_pct": "Utilization %"
             })
 
             st.subheader("Member Utilization")
-            st.dataframe(member_stats[["Name","Total hours","Leave hours","Utilized hours","Utilization %"]])
+            st.dataframe(member_stats[["Name", "Total hours", "Leave hours", "Utilized hours", "Utilization %"]])
 
             # Team-level aggregation
             team_total_hours = member_stats["Total hours"].sum()
@@ -316,11 +330,11 @@ with tab3:
             team_utilization_pct = (team_utilized_hours / team_total_hours * 100) if team_total_hours > 0 else 0
 
             team_stats = pd.DataFrame({
-                "Team":[TEAM],
-                "Total hours":[team_total_hours],
-                "Leave hours":[team_leave_hours],
-                "Utilized hours":[team_utilized_hours],
-                "Utilization %":[round(team_utilization_pct, 1)]
+                "Team": [TEAM],
+                "Total hours": [team_total_hours],
+                "Leave hours": [team_leave_hours],
+                "Utilized hours": [team_utilized_hours],
+                "Utilization %": [round(team_utilization_pct, 1)]
             })
 
             st.subheader("Team Utilization")
