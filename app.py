@@ -41,7 +41,7 @@ PUBLIC_HOLIDAYS = {
 # ------------------ Tabs ------------------
 tab1, tab2, tab3 = st.tabs(["📝 Production Design", "📊 Visuals", "📈 Utilization & Occupancy"])
 
-# ------------------ TAB 1 ------------------
+# ------------------ TAB 1: Production Design ------------------
 with tab1:
     st.title("Production Design")
     st.text_input("Team", TEAM, disabled=True, key="team_display")
@@ -111,7 +111,7 @@ with tab1:
             df1 = df1.iloc[:, start_index:]
         st.dataframe(df1, use_container_width=True)
 
-# ------------------ TAB 2 ------------------
+# ------------------ TAB 2: Visuals ------------------
 with tab2:
     st.title("Visuals Dashboard")
     try:
@@ -125,7 +125,7 @@ with tab2:
         st.info("No data available")
     else:
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
-        view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
+        view = st.radio("Select view", ["Week-to-Date", "Month-to-Date", "Previous Month"])
 
         if view == "Week-to-Date":
             current_week = datetime.now().isocalendar()[1]
@@ -142,32 +142,54 @@ with tab2:
         if filtered.empty:
             st.info("No visuals for selected view.")
         else:
+            # Week-wise aggregation
+            week_grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index().sort_values("week")
+            # Member-wise aggregation
             member_grouped = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
 
-            c1, c2 = st.columns(2)
-            with c1:
+            # Row 1: Tickets by Week + Banners by Week
+            r1c1, r1c2 = st.columns(2)
+            with r1c1:
+                st.subheader("Tickets by week")
+                tickets_week_chart = alt.Chart(week_grouped).mark_bar(color="steelblue").encode(
+                    x=alt.X("week:O", title="Week"),
+                    y=alt.Y("tickets:Q", title="Tickets"),
+                    tooltip=["week","tickets"]
+                )
+                st.altair_chart(tickets_week_chart, use_container_width=True)
+            with r1c2:
+                st.subheader("Banners by week")
+                banners_week_chart = alt.Chart(week_grouped).mark_bar(color="orange").encode(
+                    x=alt.X("week:O", title="Week"),
+                    y=alt.Y("banners:Q", title="Banners"),
+                    tooltip=["week","banners"]
+                )
+                st.altair_chart(banners_week_chart, use_container_width=True)
+
+            # Row 2: Tickets by Member + Banners by Member
+            r2c1, r2c2 = st.columns(2)
+            with r2c1:
                 st.subheader("Tickets by member")
-                tickets_chart = alt.Chart(member_grouped).mark_bar(color="steelblue").encode(
+                tickets_member_chart = alt.Chart(member_grouped).mark_bar(color="steelblue").encode(
                     x=alt.X("member:N", title="Member", sort="-y"),
                     y=alt.Y("tickets:Q", title="Tickets"),
                     tooltip=["member","tickets"]
                 )
-                st.altair_chart(tickets_chart, use_container_width=True)
-
-            with c2:
+                st.altair_chart(tickets_member_chart, use_container_width=True)
+            with r2c2:
                 st.subheader("Banners by member")
-                banners_chart = alt.Chart(member_grouped).mark_bar(color="orange").encode(
+                banners_member_chart = alt.Chart(member_grouped).mark_bar(color="orange").encode(
                     x=alt.X("member:N", title="Member", sort="-y"),
                     y=alt.Y("banners:Q", title="Banners"),
                     tooltip=["member","banners"]
                 )
-                st.altair_chart(banners_chart, use_container_width=True)
+                st.altair_chart(banners_member_chart, use_container_width=True)
 
-# ------------------ TAB 3 ------------------
+# ------------------ TAB 3: Utilization & Occupancy ------------------
 with tab3:
     st.title("Utilization & Occupancy")
 
-    # Fetch data
+    # Fetch
     try:
         response = supabase.table("creative").select("*").execute()
         raw = pd.DataFrame(response.data)
@@ -241,7 +263,6 @@ with tab3:
             weekdays = working_days_between(start, end)
 
         else:
-            # A specific month label from the data (e.g., "November 2024")
             sel_period = available_months[month_labels.index(choice)]
             sel_year, sel_mon = sel_period.year, sel_period.month
             start = date(sel_year, sel_mon, 1)
