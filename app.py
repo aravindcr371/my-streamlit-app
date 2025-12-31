@@ -29,8 +29,8 @@ if st.session_state.get("do_reset"):
     st.session_state["do_reset"] = False
 
 # ------------------ Public Holidays ------------------
+# Hard-code public holidays (Mon–Fri will be counted, Saturdays/Sundays always ignored)
 PUBLIC_HOLIDAYS = {
-    date(2024, 11, 14),  # Example: Nov 14, 2024
     date(2024, 12, 25),  # Example: Dec 25, 2024
     date(2025, 1, 1),    # Example: Jan 1, 2025
     # Add more dates as needed
@@ -125,7 +125,33 @@ with tab2:
     else:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         view = st.radio("Select View", ["Week-to-Date", "Month-to-Date", "Previous Month"])
-        # (Visuals logic same as before...)
+        # Simple example charts (customize as needed)
+        if view == "Week-to-Date":
+            wk = datetime.now().isocalendar()[1]
+            filtered = df[df["week"] == wk]
+        elif view == "Month-to-Date":
+            m = datetime.now().month
+            filtered = df[df["date"].dt.month == m]
+        else:
+            prev_m = (datetime.now().month - 1) or 12
+            filtered = df[df["date"].dt.month == prev_m]
+
+        if filtered.empty:
+            st.info("No visuals for selected view.")
+        else:
+            grouped = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
+            chart_t = alt.Chart(grouped).mark_bar(color="steelblue").encode(
+                x=alt.X("member:N", title="Member"),
+                y=alt.Y("tickets:Q", title="Tickets"),
+                tooltip=["member","tickets"]
+            )
+            chart_b = alt.Chart(grouped).mark_bar(color="orange").encode(
+                x=alt.X("member:N", title="Member"),
+                y=alt.Y("banners:Q", title="Banners"),
+                tooltip=["member","banners"]
+            )
+            st.altair_chart(chart_t, use_container_width=True)
+            st.altair_chart(chart_b, use_container_width=True)
 
 # ------------------ TAB 3 ------------------
 with tab3:
@@ -141,57 +167,122 @@ with tab3:
     if raw.empty:
         st.info("No data available")
     else:
+        # Prepare data
         df = raw.copy()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df["hours"] = df["duration"] / 60.0
+
+        # Productive excludes Break and Leave
         df["productive_hours"] = df.apply(lambda r: 0 if r["component"] in ["Break","Leave"] else r["hours"], axis=1)
-        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"]=="Leave" else 0, axis=1)
+        # Leave hours directly from component
+        df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
+        # Current date context
         today = datetime.now().date()
-        current_weekday = today.weekday()
-        current_week = today.isocalendar()[1]
-        current_year = today.isocalendar()[0]
+        current_weekday = today.weekday()          # Mon=0 ... Sun=6
+        current_month = today.month
+        current_year = today.year
+        iso_year = today.isocalendar()[0]
+        iso_week = today.isocalendar()[1]
 
-        def working_days_between(start, end):
+        # Helpers
+        def end_of_month(y: int, m: int) -> date:
+            if m == 12:
+                return date(y, 12, 31)
+            return (date(y, m + 1, 1) - timedelta(days=1))
+
+        def working_days_between(start: date, end: date):
             days = pd.date_range(start, end, freq="D")
             return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
-        # --- Week selector ---
-        df["iso_year_week"] = df["date"].dt.strftime("%G-W%V")
-        available_weeks = sorted(df["iso_year_week"].unique())
-
-        prev_week = current_week - 1 if current_week > 1 else 52
-        prev_year = current_year if current_week > 1 else current_year - 1
-
-        week_options = [f"Current Week ({current_year}-W{current_week:02d})",
-                        f"Previous Week ({prev_year}-W{prev_week:02d})"]
-
-        for wk in available_weeks:
-            if wk not in [f"{current_year}-W{current_week:02d}", f"{prev_year}-W{prev_week:02d}"]:
-                week_options.append(wk)
-
-        week_choice = st.selectbox("Select Week", week_options)
-
-        # --- Month selector ---
+        # Build dropdown options (single selector)
         df["year_month"] = df["date"].dt.to_period("M")
         available_months = sorted(df["year_month"].unique())
+        # Only months from Nov 2024 onwards
         available_months = [m for m in available_months if (m.year > 2024 or (m.year == 2024 and m.month >= 11))]
         month_labels = [f"{m.strftime('%B %Y')}" for m in available_months]
-        month_choice = st.selectbox("Select Month", month_labels)
-        month_mode = st.radio("Month Mode", ["MTD", "Previous Month"])
 
-        # --- WEEK LOGIC ---
-        if week_choice.startswith("Current Week"):
+        options = ["Current Week", "Previous Week", "Current Month", "Previous Month"] + month_labels
+        choice = st.selectbox("Select period", options)
+
+        # Compute date range and filter df based on choice
+        if choice == "Current Week":
             start = today - timedelta(days=current_weekday)
-            weekdays = working_days_between(start, today)
-        elif week_choice.startswith("Previous Week"):
-            start = today - timedelta(days=current_weekday + 7)
-            end = start + timedelta(days=4)
-            weekdays = working_days_between(start, end)
-        else:
-            year, week = week_choice.split("-W")
-            year = int(year); week = int(week)
-            start = datetime.fromisocalendar(year, week, 1).date()
-            end = start + timedelta(days=4)
+            end = today
             weekdays = working_days_between(start, end)
 
+        elif choice == "Previous Week":
+            start = today - timedelta(days=current_weekday + 7)  # previous Monday
+            end = start + timedelta(days=4)                      # previous Friday
+            weekdays = working_days_between(start, end)
+
+        elif choice == "Current Month":
+            start = date(current_year, current_month, 1)
+            end = today
+            weekdays = working_days_between(start, end)
+
+        elif choice == "Previous Month":
+            prev_month = current_month - 1 if current_month > 1 else 12
+            prev_year = current_year if current_month > 1 else current_year - 1
+            start = date(prev_year, prev_month, 1)
+            end = end_of_month(prev_year, prev_month)
+            weekdays = working_days_between(start, end)
+
+        else:
+            # A specific month label from data (e.g., "November 2024")
+            sel_period = available_months[month_labels.index(choice)]
+            sel_year, sel_mon = sel_period.year, sel_period.month
+            start = date(sel_year, sel_mon, 1)
+            end = end_of_month(sel_year, sel_mon)
+            weekdays = working_days_between(start, end)
+
+        # Filter df to only those weekdays
+        period_df = df[df["date"].dt.normalize().isin(weekdays)]
+        baseline_hours_period = len(weekdays) * 8
+
+        if period_df.empty:
+            st.info("No data for the selected period.")
+        else:
+            # Aggregate member-level metrics
+            agg = period_df.groupby("member").agg(
+                utilized_hours=("productive_hours", "sum"),
+                leave_hours=("leave_hours", "sum")
+            ).reset_index()
+
+            # Total hours baseline per member = period baseline - leave hours
+            agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
+
+            # Utilization % per member = utilized_hours / total_hours
+            agg["utilization_pct"] = (
+                (agg["utilized_hours"] / agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
+            ).round(1)
+
+            # Final display columns
+            member_stats = agg.rename(columns={
+                "member": "Name",
+                "leave_hours": "Leave hours",
+                "utilized_hours": "Utilized hours",
+                "total_hours": "Total hours",
+                "utilization_pct": "Utilization %"
+            })
+
+            st.subheader("Member utilization")
+            st.dataframe(member_stats[["Name", "Total hours", "Leave hours", "Utilized hours", "Utilization %"]],
+                         use_container_width=True)
+
+            # Team-level aggregation
+            team_total_hours = member_stats["Total hours"].sum()
+            team_leave_hours = member_stats["Leave hours"].sum()
+            team_utilized_hours = member_stats["Utilized hours"].sum()
+            team_utilization_pct = (team_utilized_hours / team_total_hours * 100) if team_total_hours > 0 else 0
+
+            team_stats = pd.DataFrame({
+                "Team": [TEAM],
+                "Total hours": [round(team_total_hours, 2)],
+                "Leave hours": [round(team_leave_hours, 2)],
+                "Utilized hours": [round(team_utilized_hours, 2)],
+                "Utilization %": [round(team_utilization_pct, 1)]
+            })
+
+            st.subheader("Team utilization")
+            st.dataframe(team_stats, use_container_width=True)
