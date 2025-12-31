@@ -8,8 +8,8 @@ from supabase import create_client
 st.set_page_config(layout="wide")
 
 # ------------------ Supabase setup ------------------
-SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"   # TODO: replace
-SUPABASE_KEY = "YOUR-ANON-KEY"                      # TODO: replace
+SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"   # TODO: replace
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"                      # TODO: replace
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TEAM = "Production Design"
