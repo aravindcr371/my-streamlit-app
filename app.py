@@ -37,6 +37,70 @@ PUBLIC_HOLIDAYS = {
     date(2025, 1, 1),
 }
 
+# ------------------ Shared helpers (used by Tab 2 & Tab 3) ------------------
+def end_of_month(y: int, m: int) -> date:
+    if m == 12:
+        return date(y, 12, 31)
+    return (date(y, m + 1, 1) - timedelta(days=1))
+
+def working_days_between(start: date, end: date):
+    days = pd.date_range(start, end, freq="D")
+    # Weekdays only, excluding public holidays
+    return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
+
+def build_period_options_and_weekdays(df_dates: pd.Series):
+    """Returns (options, available_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year)."""
+    today = date.today()
+    current_weekday = today.weekday()
+    current_month = today.month
+    current_year = today.year
+
+    # Months available from Nov 2024 onward
+    year_month = pd.to_datetime(df_dates, errors="coerce").dt.to_period("M")
+    available_months = sorted([m for m in year_month.unique() if (m.year > 2024 or (m.year == 2024 and m.month >= 11))])
+
+    # Compute previous month period (to exclude from month labels to avoid duplication)
+    prev_month = current_month - 1 if current_month > 1 else 12
+    prev_year = current_year if current_month > 1 else current_year - 1
+    previous_month_period = pd.Period(f"{prev_year}-{prev_month:02d}")
+
+    # Exclude previous month from month labels
+    filtered_months = [m for m in available_months if m != previous_month_period]
+    month_labels = [f"{m.strftime('%B %Y')}" for m in filtered_months]
+
+    # Build options: fixed + months (without previous month label)
+    options = ["Current Week", "Previous Week", "Current Month", "Previous Month"] + month_labels
+
+    return options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year
+
+def compute_weekdays_for_choice(choice: str, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year):
+    """Return the list of normalized working days based on the selected choice."""
+    if choice == "Current Week":
+        start = today - timedelta(days=current_weekday)  # Monday
+        end = today
+        weekdays = working_days_between(start, end)
+    elif choice == "Previous Week":
+        start = today - timedelta(days=current_weekday + 7)  # prev Monday
+        end = start + timedelta(days=4)                      # prev Friday
+        weekdays = working_days_between(start, end)
+    elif choice == "Current Month":
+        start = date(current_year, current_month, 1)
+        end = today
+        weekdays = working_days_between(start, end)
+    elif choice == "Previous Month":
+        pm = previous_month_period
+        start = date(pm.year, pm.month, 1)
+        end = end_of_month(pm.year, pm.month)
+        weekdays = working_days_between(start, end)
+    else:
+        # A specific month label
+        sel_period = filtered_months[month_labels.index(choice)]
+        start = date(sel_period.year, sel_period.month, 1)
+        end = end_of_month(sel_period.year, sel_period.month)
+        weekdays = working_days_between(start, end)
+
+    return weekdays
+
 # ------------------ Tabs ------------------
 tab1, tab2, tab3 = st.tabs(["📝 Production Design", "📊 Visuals", "📈 Utilization & Occupancy"])
 
@@ -85,6 +149,7 @@ with tab1:
                 "comments": (comments or "").strip() or None
             }
             try:
+                # Insert
                 res = supabase.table("creative").insert(new_row).execute()
                 if res.data:
                     st.success("Saved successfully")
@@ -97,18 +162,33 @@ with tab1:
         else:
             st.warning("Please select a member and component, and pick a date before submitting.")
 
+    # Fetch data sorted by ID DESC
     try:
-        response = supabase.table("creative").select("*").execute()
+        # Prefer ordering at DB level
+        response = supabase.table("creative").select("*").order("id", desc=True).execute()
         df1 = pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"Error fetching data: {e}")
-        df1 = pd.DataFrame()
+        # Fallback plain fetch + pandas sort if possible
+        try:
+            response = supabase.table("creative").select("*").execute()
+            df1 = pd.DataFrame(response.data)
+            if "id" in df1.columns:
+                df1 = df1.sort_values("id", ascending=False)
+        except Exception as e2:
+            st.error(f"Error fetching fallback: {e2}")
+            df1 = pd.DataFrame()
 
     if not df1.empty:
+        # Optional: display from 'team' column onward as in your original view
         if "team" in df1.columns:
             start_index = df1.columns.get_loc("team")
-            df1 = df1.iloc[:, start_index:]
-        st.dataframe(df1, use_container_width=True)
+            df1_display = df1.iloc[:, start_index:]
+        else:
+            df1_display = df1
+
+        st.subheader("Latest entries (sorted by ID descending)")
+        st.dataframe(df1_display, use_container_width=True)
 
 # ------------------ TAB 2: Visuals ------------------
 with tab2:
@@ -126,32 +206,27 @@ with tab2:
         # Normalize date
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
 
-        # View selector
-        view = st.radio("Select view", ["Week-to-Date", "Month-to-Date", "Previous Month"])
+        # --- Use the SAME dropdown logic as Tab 3, excluding the previous month label ---
+        options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_weekdays(vdf["date"])
+        choice = st.selectbox("Select period", options)
 
-        if view == "Week-to-Date":
-            current_week = datetime.now().isocalendar()[1]
-            filtered = vdf[vdf["week"] == current_week]
-        elif view == "Month-to-Date":
-            now = datetime.now()
-            filtered = vdf[(vdf["date"].dt.month == now.month) & (vdf["date"].dt.year == now.year)]
-        else:
-            now = datetime.now()
-            prev_month = now.month - 1 if now.month > 1 else 12
-            prev_year = now.year if now.month > 1 else now.year - 1
-            filtered = vdf[(vdf["date"].dt.month == prev_month) & (vdf["date"].dt.year == prev_year)]
+        # Compute working weekdays for selected period
+        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year)
+
+        # Filter data to selected working days
+        filtered = vdf[vdf["date"].dt.normalize().isin(weekdays)]
 
         if filtered.empty:
-            st.info("No visuals for selected view.")
+            st.info("No visuals for selected period.")
         else:
-            # Week-wise
+            # Week-wise aggregation
             week_grouped = (
                 filtered.groupby("week")[["tickets", "banners"]]
                 .sum()
                 .reset_index()
                 .sort_values("week")
             )
-            # Member-wise
+            # Member-wise aggregation
             member_grouped = filtered.groupby("member")[["tickets", "banners"]].sum().reset_index()
 
             # Helper to add numeric labels
@@ -280,55 +355,12 @@ with tab3:
         )
         df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
-        # Date helpers
-        today = date.today()
-        current_weekday = today.weekday()
-        current_month = today.month
-        current_year = today.year
-
-        def end_of_month(y: int, m: int) -> date:
-            if m == 12:
-                return date(y, 12, 31)
-            return (date(y, m + 1, 1) - timedelta(days=1))
-
-        def working_days_between(start: date, end: date):
-            days = pd.date_range(start, end, freq="D")
-            return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
-
-        # Period dropdown (weeks + months from data, Nov 2024 onward)
-        df["year_month"] = df["date"].dt.to_period("M")
-        available_months = sorted(df["year_month"].unique())
-        available_months = [m for m in available_months if (m.year > 2024 or (m.year == 2024 and m.month >= 11))]
-        month_labels = [f"{m.strftime('%B %Y')}" for m in available_months]
-
-        options = ["Current Week", "Previous Week", "Current Month", "Previous Month"] + month_labels
+        # --- SAME dropdown as Tab 2; exclude previous month label to avoid duplication ---
+        options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_weekdays(df["date"])
         choice = st.selectbox("Select period", options)
 
         # Period selection -> weekdays
-        if choice == "Current Week":
-            start = today - timedelta(days=current_weekday)  # Monday
-            end = today
-            weekdays = working_days_between(start, end)
-        elif choice == "Previous Week":
-            start = today - timedelta(days=current_weekday + 7)  # prev Monday
-            end = start + timedelta(days=4)                      # prev Friday
-            weekdays = working_days_between(start, end)
-        elif choice == "Current Month":
-            start = date(current_year, current_month, 1)
-            end = today
-            weekdays = working_days_between(start, end)
-        elif choice == "Previous Month":
-            prev_month = current_month - 1 if current_month > 1 else 12
-            prev_year = current_year if current_month > 1 else current_year - 1
-            start = date(prev_year, prev_month, 1)
-            end = end_of_month(prev_year, prev_month)
-            weekdays = working_days_between(start, end)
-        else:
-            sel_period = available_months[month_labels.index(choice)]
-            sel_year, sel_mon = sel_period.year, sel_period.month
-            start = date(sel_year, sel_mon, 1)
-            end = end_of_month(sel_year, sel_mon)
-            weekdays = working_days_between(start, end)
+        weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year)
 
         # Filter to weekdays and compute baseline
         period_df = df[df["date"].dt.normalize().isin(weekdays)]
@@ -344,13 +376,22 @@ with tab3:
                 leave_hours=("leave_hours", "sum")
             ).reset_index()
 
+            # Compute totals & percentages
             agg["total_hours"] = baseline_hours_period - agg["leave_hours"]
+
+            # Percentages to 1 decimal
             agg["utilization_%"] = (
                 (agg["utilized_hours"] / agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
             ).round(1)
             agg["occupancy_%"] = (
                 (agg["occupied_hours"] / agg["total_hours"]).where(agg["total_hours"] > 0, 0) * 100
             ).round(1)
+
+            # Round hours to 1 decimal
+            agg["utilized_hours"] = agg["utilized_hours"].round(1)
+            agg["occupied_hours"] = agg["occupied_hours"].round(1)
+            agg["leave_hours"] = agg["leave_hours"].round(1)
+            agg["total_hours"] = agg["total_hours"].round(1)
 
             merged_stats = agg.rename(columns={
                 "member": "Name",
@@ -362,29 +403,36 @@ with tab3:
                 "occupancy_%": "Occupancy %"
             })
 
+            # Ensure all numeric columns are to 1 decimal
+            numeric_cols = ["Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]
+            for col in numeric_cols:
+                merged_stats[col] = merged_stats[col].astype(float).round(1)
+
             st.subheader("Member Utilization & Occupancy")
             st.dataframe(
                 merged_stats[["Name","Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]],
                 use_container_width=True
             )
 
-            # Team-level summary
-            team_total = merged_stats["Total Hours"].sum()
-            team_leave = merged_stats["Leave Hours"].sum()
-            team_utilized = merged_stats["Utilized Hours"].sum()
-            team_occupied = merged_stats["Occupied Hours"].sum()
-            team_util_pct = (team_utilized / team_total * 100) if team_total > 0 else 0
-            team_occ_pct = (team_occupied / team_total * 100) if team_total > 0 else 0
+            # Team-level summary (rounded to 1 decimal)
+            team_total = float(merged_stats["Total Hours"].sum())
+            team_leave = float(merged_stats["Leave Hours"].sum())
+            team_utilized = float(merged_stats["Utilized Hours"].sum())
+            team_occupied = float(merged_stats["Occupied Hours"].sum())
+
+            team_util_pct = (team_utilized / team_total * 100) if team_total > 0 else 0.0
+            team_occ_pct = (team_occupied / team_total * 100) if team_total > 0 else 0.0
 
             team_df = pd.DataFrame({
                 "Team": [TEAM],
-                "Total Hours": [round(team_total, 2)],
-                "Leave Hours": [round(team_leave, 2)],
-                "Utilized Hours": [round(team_utilized, 2)],
-                "Occupied Hours": [round(team_occupied, 2)],
+                "Total Hours": [round(team_total, 1)],
+                "Leave Hours": [round(team_leave, 1)],
+                "Utilized Hours": [round(team_utilized, 1)],
+                "Occupied Hours": [round(team_occupied, 1)],
                 "Utilization %": [round(team_util_pct, 1)],
                 "Occupancy %": [round(team_occ_pct, 1)]
             })
 
             st.subheader("Team Utilization & Occupancy")
             st.dataframe(team_df, use_container_width=True)
+``
