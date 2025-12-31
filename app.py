@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -9,7 +10,7 @@ st.set_page_config(layout="wide")
 
 # ------------------ Supabase setup ------------------
 SUPABASE_URL = "https://vupalstqgfzwxwlvengp.supabase.co"   # TODO: replace
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"                      # TODO: replace
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1cGFsc3RxZ2Z6d3h3bHZlbmdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMTI0MjIsImV4cCI6MjA4MjU4ODQyMn0.tQsnAFYleVlRldH_nYW3QGhMvEQaYVH0yXNpkJqtkBY"  # TODO: replace
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TEAM = "Production Design"
@@ -122,7 +123,10 @@ with tab2:
     if vdf.empty:
         st.info("No data available")
     else:
+        # Normalize date
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
+
+        # View selector
         view = st.radio("Select view", ["Week-to-Date", "Month-to-Date", "Previous Month"])
 
         if view == "Week-to-Date":
@@ -141,9 +145,14 @@ with tab2:
             st.info("No visuals for selected view.")
         else:
             # Week-wise
-            week_grouped = filtered.groupby("week")[["tickets","banners"]].sum().reset_index().sort_values("week")
+            week_grouped = (
+                filtered.groupby("week")[["tickets", "banners"]]
+                .sum()
+                .reset_index()
+                .sort_values("week")
+            )
             # Member-wise
-            member_grouped = filtered.groupby("member")[["tickets","banners"]].sum().reset_index()
+            member_grouped = filtered.groupby("member")[["tickets", "banners"]].sum().reset_index()
 
             # Helper to add numeric labels
             def bar_with_labels(df, x_field, y_field, x_type="O", y_type="Q", color="steelblue", x_title="", y_title=""):
@@ -164,27 +173,85 @@ with tab2:
             r1c1, r1c2 = st.columns(2)
             with r1c1:
                 st.subheader("Tickets by week")
-                chart = bar_with_labels(week_grouped, "week", "tickets", x_type="O", y_type="Q",
-                                        color="steelblue", x_title="Week", y_title="Tickets")
+                chart = bar_with_labels(
+                    week_grouped, "week", "tickets",
+                    x_type="O", y_type="Q",
+                    color="steelblue", x_title="Week", y_title="Tickets"
+                )
                 st.altair_chart(chart, use_container_width=True)
             with r1c2:
                 st.subheader("Banners by week")
-                chart = bar_with_labels(week_grouped, "week", "banners", x_type="O", y_type="Q",
-                                        color="orange", x_title="Week", y_title="Banners")
+                chart = bar_with_labels(
+                    week_grouped, "week", "banners",
+                    x_type="O", y_type="Q",
+                    color="orange", x_title="Week", y_title="Banners"
+                )
                 st.altair_chart(chart, use_container_width=True)
 
             # Row 2: Tickets by Member + Banners by Member
             r2c1, r2c2 = st.columns(2)
             with r2c1:
                 st.subheader("Tickets by member")
-                chart = bar_with_labels(member_grouped, "member", "tickets", x_type="N", y_type="Q",
-                                        color="steelblue", x_title="Member", y_title="Tickets")
+                chart = bar_with_labels(
+                    member_grouped, "member", "tickets",
+                    x_type="N", y_type="Q",
+                    color="steelblue", x_title="Member", y_title="Tickets"
+                )
                 st.altair_chart(chart, use_container_width=True)
             with r2c2:
                 st.subheader("Banners by member")
-                chart = bar_with_labels(member_grouped, "member", "banners", x_type="N", y_type="Q",
-                                        color="orange", x_title="Member", y_title="Banners")
+                chart = bar_with_labels(
+                    member_grouped, "member", "banners",
+                    x_type="N", y_type="Q",
+                    color="orange", x_title="Member", y_title="Banners"
+                )
                 st.altair_chart(chart, use_container_width=True)
+
+            # --- Row 3: Sum of Tickets + Banners by Component (Descending) ---
+            st.subheader("By Component (Sum of Tickets + Banners)")
+            component_grouped = (
+                filtered
+                .groupby("component")[["tickets", "banners"]]
+                .sum()
+                .reset_index()
+            )
+
+            # Handle missing/blank component names
+            component_grouped["component"] = component_grouped["component"].fillna("Unspecified")
+            component_grouped.loc[component_grouped["component"].eq(""), "component"] = "Unspecified"
+
+            # Compute total = tickets + banners and sort by descending totals
+            component_grouped["total"] = component_grouped["tickets"] + component_grouped["banners"]
+            component_grouped = component_grouped.sort_values("total", ascending=False)
+
+            # Bar chart with numeric labels; x = component, y = total
+            bar = alt.Chart(component_grouped).mark_bar(color="#4C78A8").encode(
+                x=alt.X(
+                    "component:N",
+                    title="Component",
+                    sort=alt.SortField(field="total", order="descending")
+                ),
+                y=alt.Y("total:Q", title="Sum of Tickets + Banners")
+            ).properties(height=400)
+
+            text = alt.Chart(component_grouped).mark_text(
+                align="center", baseline="bottom", dy=-5, color="black"
+            ).encode(
+                x=alt.X("component:N", sort=alt.SortField(field="total", order="descending")),
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q")
+            )
+
+            chart = (bar + text).encode(
+                tooltip=[
+                    alt.Tooltip("component:N", title="Component"),
+                    alt.Tooltip("tickets:Q", title="Tickets"),
+                    alt.Tooltip("banners:Q", title="Banners"),
+                    alt.Tooltip("total:Q", title="Total"),
+                ]
+            )
+
+            st.altair_chart(chart, use_container_width=True)
 
 # ------------------ TAB 3: Utilization & Occupancy ------------------
 with tab3:
