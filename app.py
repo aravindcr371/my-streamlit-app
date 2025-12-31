@@ -435,4 +435,3 @@ with tab3:
 
             st.subheader("Team Utilization & Occupancy")
             st.dataframe(team_df, use_container_width=True)
-``
