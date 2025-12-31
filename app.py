@@ -31,7 +31,6 @@ if st.session_state.get("do_reset"):
 # ------------------ Public Holidays ------------------
 # Hard-code public holidays here as a set of datetime.date objects
 PUBLIC_HOLIDAYS = {
-    date(2024, 11, 14),  # Example: Nov 14, 2024
     date(2024, 12, 25),  # Example: Dec 25, 2024
     date(2025, 1, 1),    # Example: Jan 1, 2025
     # Add more dates as needed
