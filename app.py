@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date as date_cls, timedelta
+from datetime import datetime, date, timedelta
 import altair as alt
 from supabase import create_client
 
@@ -69,9 +69,9 @@ with tab1:
         submitted = st.form_submit_button("Submit")
 
     if submitted:
-        if isinstance(date_value, (datetime, date_cls)) and member != "-- Select --" and component != "-- Select --":
+        if isinstance(date_value, (datetime, date)) and member != "-- Select --" and component != "-- Select --":
             duration_minutes = int(hours) * 60 + int(minutes)
-            d = date_value if isinstance(date_value, date_cls) else date_value.date()
+            d = date_value if isinstance(date_value, date) else date_value.date()
             new_row = {
                 "team": TEAM,
                 "date": d.isoformat(),
@@ -152,7 +152,6 @@ with tab3:
         current_week = today.isocalendar()[1]
         current_year = today.isocalendar()[0]
 
-        # Helper: weekdays excluding weekends and public holidays
         def working_days_between(start, end):
             days = pd.date_range(start, end, freq="D")
             return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
@@ -185,11 +184,14 @@ with tab3:
         if week_choice.startswith("Current Week"):
             start = today - timedelta(days=current_weekday)
             weekdays = working_days_between(start, today)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
         elif week_choice.startswith("Previous Week"):
             start = today - timedelta(days=current_weekday + 7)
             end = start + timedelta(days=4)
             weekdays = working_days_between(start, end)
-            period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+        else:
+            year, week = week_choice.split("-W")
+            year = int(year); week = int(week)
+            start = datetime.fromisocalendar(year, week, 1).date()
+            end = start + timedelta(days=4)
+            weekdays = working_days_between(start, end)
+
