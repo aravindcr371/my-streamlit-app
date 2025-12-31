@@ -30,15 +30,16 @@ if st.session_state.get("do_reset"):
         st.session_state.pop(k, None)
     st.session_state["do_reset"] = False
 
-# ------------------ Hard-coded working days for specific months ------------------
-# Only Nov 2024, Dec 2024, Jan 2025 are needed
+# ------------------ Hard-coded working days for completed months ------------------
+# Use these only for "Last Month" baseline (completed months)
 WORKING_DAYS = {
-    (2024, 11): 19,  # November 2024 weekdays
-    (2025, 1): 23    # January 2025 weekdays
+    (2024, 11): 19,  # November 2024 → 19 days → 152 hours
+    (2024, 12): 22,  # December 2024 → 22 days → 176 hours
+    (2025, 1): 23    # January 2025 → 23 days → 184 hours
 }
 
 def baseline_hours_for_month(year: int, month: int) -> int:
-    """Baseline hours for a full month based on hard-coded working days."""
+    """Baseline hours for a completed month from hard-coded working days."""
     return WORKING_DAYS.get((year, month), 20) * 8  # default 20 days if missing
 
 # ------------------ Tabs ------------------
@@ -262,7 +263,7 @@ with tab3:
             start = today - timedelta(days=current_weekday)
             weekdays = weekdays_between(start, today)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+            baseline_hours_period = len(weekdays) * 8  # dynamic WTD baseline
 
         elif view == "Last Week":
             # Monday–Friday of previous week
@@ -270,29 +271,26 @@ with tab3:
             end = start + timedelta(days=4)
             weekdays = weekdays_between(start, end)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+            baseline_hours_period = len(weekdays) * 8  # dynamic last-week baseline
 
         elif view == "Month-to-Date":
-            # Weekdays from 1st of current month → today
+            # Weekdays from 1st of current month → today (dynamic)
             start = datetime(current_year, current_month, 1).date()
             weekdays = weekdays_between(start, today)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            baseline_hours_period = len(weekdays) * 8
+            baseline_hours_period = len(weekdays) * 8  # dynamic MTD baseline
 
-        else:  # Last Month
-            # All weekdays of previous month
+        else:  # Last Month (use hard-coded baseline)
             prev_month = current_month - 1 if current_month > 1 else 12
             year = current_year if current_month > 1 else current_year - 1
             start = datetime(year, prev_month, 1).date()
-            # End of previous month
             if prev_month == 12:
                 end = datetime(year, 12, 31).date()
             else:
                 end = (datetime(year, prev_month + 1, 1) - timedelta(days=1)).date()
             weekdays = weekdays_between(start, end)
             period_df = df[df["date"].dt.normalize().isin(weekdays)]
-            # Baseline for last month comes from the hard-coded working days dictionary
-            baseline_hours_period = baseline_hours_for_month(year, prev_month)
+            baseline_hours_period = baseline_hours_for_month(year, prev_month)  # hard-coded completed month
 
         if period_df.empty:
             st.info("No data for the selected period.")
