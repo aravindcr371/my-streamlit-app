@@ -212,4 +212,4 @@ with tab3:
             st.info("No data for the selected period.")
         else:
             agg = period_df.groupby("member").agg(
-                utilized_hours=("productive_hours
+                utilized_hours
