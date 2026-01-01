@@ -22,7 +22,8 @@ COMPONENTS = ["-- Select --","Content Email","Digital Banners","Weekend","Edits"
 
 RESET_KEYS = [
     "date_field", "member_field", "component_field",
-    "tickets_field", "banners_field", "sku_field", "pages_field",  # <-- added
+    # Frontend-only removals are fine; keys listed for safety in reset
+    "tickets_field", "banners_field", "sku_field", "pages_field",
     "hours_field", "minutes_field", "comments_field"
 ]
 
@@ -45,6 +46,7 @@ def end_of_month(y: int, m: int) -> date:
 
 def working_days_between(start: date, end: date):
     days = pd.date_range(start, end, freq="D")
+    # normalize to midnight to match .dt.normalize()
     return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
 def build_period_options_and_months(df_dates: pd.Series):
@@ -106,25 +108,15 @@ with tab1:
         with c2:
             component = st.selectbox("Component", COMPONENTS)
 
-        # Row: Tickets & Banners
+        # FRONTEND: removed tickets, sku, pages (per request)
+        # Keep Banners field (if you still capture it for PD)
+        banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
+
+        # Hours & Minutes
         c3, c4 = st.columns(2)
         with c3:
-            tickets = st.number_input("Tickets", min_value=0, step=1, key="tickets_field")
-        with c4:
-            banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
-
-        # NEW Row: SKU & Pages (added after Tickets & Banners)
-        c3b, c4b = st.columns(2)
-        with c3b:
-            sku = st.number_input("SKU", min_value=0, step=1, key="sku_field")
-        with c4b:
-            pages = st.number_input("Pages", min_value=0, step=1, key="pages_field")
-
-        # Row: Hours & Minutes
-        c5, c6 = st.columns(2)
-        with c5:
             hours = st.selectbox("Hours", list(range(24)), key="hours_field")
-        with c6:
+        with c4:
             minutes = st.selectbox("Minutes", list(range(60)), key="minutes_field")
 
         comments = st.text_area("Comments", key="comments_field")
@@ -134,6 +126,8 @@ with tab1:
         if isinstance(date_value, (datetime, date)) and member != "-- Select --" and component != "-- Select --":
             d = date_value if isinstance(date_value, date) else date_value.date()
             duration_minutes = int(hours) * 60 + int(minutes)
+
+            # DB entry can have tickets/sku/pages as 0 (schema compatibility)
             new_row = {
                 "team": TEAM,
                 "date": d.isoformat(),
@@ -141,10 +135,10 @@ with tab1:
                 "month": d.strftime("%B"),
                 "member": member,
                 "component": component,
-                "tickets": int(tickets),
+                "tickets": 0,
+                "sku": 0,
+                "pages": 0,
                 "banners": int(banners),
-                "sku": int(sku),     # <-- added
-                "pages": int(pages), # <-- added
                 "duration": duration_minutes,
                 "comments": (comments or "").strip() or None
             }
@@ -178,6 +172,12 @@ with tab1:
             df1 = pd.DataFrame()
 
     if not df1.empty:
+        # Show only entries for this TEAM
+        df1 = df1[df1.get("team", TEAM) == TEAM].copy()
+        # Hide tickets, sku, pages in the display table (per request)
+        drop_cols = [c for c in ["tickets", "sku", "pages"] if c in df1.columns]
+        if drop_cols:
+            df1 = df1.drop(columns=drop_cols)
         st.subheader("Latest entries (sorted by Date descending)")
         st.dataframe(df1, use_container_width=True)
 
@@ -297,6 +297,7 @@ with tab3:
         if period_df.empty:
             st.info("No data for the selected period.")
         else:
+            # ------ Member Utilization & Occupancy ------
             agg = period_df.groupby("member").agg(
                 utilized_hours=("utilization_hours","sum"),
                 occupied_hours=("occupancy_hours","sum"),
@@ -329,7 +330,7 @@ with tab3:
                 "occupancy_%": "Occupancy %"
             })
 
-            # Ensure all numeric columns are to 1 decimal
+            # Ensure numeric columns are to 1 decimal
             numeric_cols = ["Total Hours","Leave Hours","Utilized Hours","Occupied Hours","Utilization %","Occupancy %"]
             for col in numeric_cols:
                 merged_stats[col] = merged_stats[col].astype(float).round(1)
@@ -361,3 +362,54 @@ with tab3:
 
             st.subheader("Team Utilization & Occupancy")
             st.dataframe(team_df, use_container_width=True)
+
+            # ------------------ Utilization by Component × Member ------------------
+            st.subheader("Utilization by Component × Member")
+
+            # Exclude Break/Leave for utilization
+            util_comp = period_df[~period_df["component"].isin(["Break","Leave"])].copy()
+
+            # Sum raw duration (minutes) by (component, member), then convert to hours
+            comp_member_minutes = util_comp.groupby(["component", "member"])["duration"].sum().reset_index()
+            comp_member_minutes["hours"] = comp_member_minutes["duration"] / 60.0
+
+            # Clean component labels
+            comp_member_minutes["component"] = comp_member_minutes["component"].fillna("Unspecified")
+            comp_member_minutes.loc[comp_member_minutes["component"].eq(""), "component"] = "Unspecified"
+
+            # Member overall recorded hours in the selected period (denominator for %)
+            member_totals_hours = (period_df.groupby("member")["duration"].sum() / 60.0).to_dict()
+
+            # Compute % of member overall recorded hours
+            comp_member_minutes["pct_of_member"] = comp_member_minutes.apply(
+                lambda r: ((r["hours"] / member_totals_hours.get(r["member"], 0)) * 100)
+                if member_totals_hours.get(r["member"], 0) > 0 else 0.0,
+                axis=1
+            )
+
+            # Display cell: "<hours>h (<pct>%)", both to 1 decimal
+            comp_member_minutes["cell"] = comp_member_minutes.apply(
+                lambda r: f"{r['hours']:.1f}h ({r['pct_of_member']:.1f}%)",
+                axis=1
+            )
+
+            # Pivot to components (rows) × members (columns)
+            pivot = comp_member_minutes.pivot(index="component", columns="member", values="cell").fillna("0.0h (0.0%)")
+
+            # Order components by total utilized hours descending
+            comp_order = (
+                comp_member_minutes.groupby("component")["hours"]
+                .sum()
+                .sort_values(ascending=False)
+                .index
+            )
+            pivot = pivot.loc[comp_order]
+
+            # Order member columns using the known MEMBERS list (excluding placeholder)
+            ordered_members = [m for m in MEMBERS if m != "-- Select --"]
+            existing_members = [m for m in ordered_members if m in pivot.columns]
+            other_members = [m for m in pivot.columns if m not in existing_members]
+            final_cols = existing_members + other_members
+            pivot = pivot.reindex(columns=final_cols)
+
+            st.dataframe(pivot, use_container_width=True)
