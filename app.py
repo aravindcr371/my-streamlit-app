@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -22,8 +21,7 @@ COMPONENTS = ["-- Select --","Content Email","Digital Banners","Weekend","Edits"
 
 RESET_KEYS = [
     "date_field", "member_field", "component_field",
-    # Frontend-only removals are fine; keys listed for safety in reset
-    "tickets_field", "banners_field", "sku_field", "pages_field",
+    "tickets_field", "banners_field", "skus_field", "pages_field",
     "hours_field", "minutes_field", "comments_field"
 ]
 
@@ -46,7 +44,6 @@ def end_of_month(y: int, m: int) -> date:
 
 def working_days_between(start: date, end: date):
     days = pd.date_range(start, end, freq="D")
-    # normalize to midnight to match .dt.normalize()
     return [d.normalize() for d in days if d.weekday() < 5 and d.date() not in PUBLIC_HOLIDAYS]
 
 def build_period_options_and_months(df_dates: pd.Series):
@@ -108,11 +105,13 @@ with tab1:
         with c2:
             component = st.selectbox("Component", COMPONENTS)
 
-        # FRONTEND: removed tickets, sku, pages (per request)
-        # Keep Banners field (if you still capture it for PD)
-        banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
+        # Tickets + Banners in the same row
+        c_tb1, c_tb2 = st.columns(2)
+        with c_tb1:
+            tickets = st.number_input("Tickets", min_value=0, step=1, key="tickets_field")
+        with c_tb2:
+            banners = st.number_input("Banners", min_value=0, step=1, key="banners_field")
 
-        # Hours & Minutes
         c3, c4 = st.columns(2)
         with c3:
             hours = st.selectbox("Hours", list(range(24)), key="hours_field")
@@ -127,7 +126,7 @@ with tab1:
             d = date_value if isinstance(date_value, date) else date_value.date()
             duration_minutes = int(hours) * 60 + int(minutes)
 
-            # DB entry can have tickets/sku/pages as 0 (schema compatibility)
+            # Insert payload with skus column name fixed and tickets included
             new_row = {
                 "team": TEAM,
                 "date": d.isoformat(),
@@ -135,8 +134,8 @@ with tab1:
                 "month": d.strftime("%B"),
                 "member": member,
                 "component": component,
-                "tickets": 0,
-                "sku": 0,
+                "tickets": int(tickets),
+                "skus": 0,
                 "pages": 0,
                 "banners": int(banners),
                 "duration": duration_minutes,
@@ -174,8 +173,8 @@ with tab1:
     if not df1.empty:
         # Show only entries for this TEAM
         df1 = df1[df1.get("team", TEAM) == TEAM].copy()
-        # Hide tickets, sku, pages in the display table (per request)
-        drop_cols = [c for c in ["tickets", "sku", "pages"] if c in df1.columns]
+        # Hide tickets, skus, pages in the display table
+        drop_cols = [c for c in ["tickets", "skus", "pages"] if c in df1.columns]
         if drop_cols:
             df1 = df1.drop(columns=drop_cols)
         st.subheader("Latest entries (sorted by Date descending)")
@@ -196,7 +195,7 @@ with tab2:
     else:
         vdf["date"] = pd.to_datetime(vdf["date"], errors="coerce")
         options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_months(vdf["date"])
-        choice = st.selectbox("Select period", options, key="tab2_period")  # <= unique key
+        choice = st.selectbox("Select period", options, key="tab2_period")  # unique key
         weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period,
                                                today, current_weekday, current_month, current_year)
         filtered = vdf[vdf["date"].dt.normalize().isin(weekdays)]
@@ -286,7 +285,7 @@ with tab3:
         df["leave_hours"] = df.apply(lambda r: r["hours"] if r["component"] == "Leave" else 0, axis=1)
 
         options, filtered_months, month_labels, previous_month_period, today, current_weekday, current_month, current_year = build_period_options_and_months(df["date"])
-        choice = st.selectbox("Select period", options, key="tab3_period")  # <= unique key
+        choice = st.selectbox("Select period", options, key="tab3_period")  # unique key
 
         weekdays = compute_weekdays_for_choice(choice, filtered_months, month_labels, previous_month_period,
                                                today, current_weekday, current_month, current_year)
